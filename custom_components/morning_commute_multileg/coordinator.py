@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
+    SOUTHBOUND_TERMINI,
     DOMAIN,
     LEG1_PREFIX,
     LEG2_STATION,
@@ -30,8 +31,17 @@ HUXLEY_URL = (
 )
 HUXLEY_ROWS = 50
 
-# Northbound destinations at CTK — everything else is southbound
-NORTHBOUND_KEYWORDS = {"bedford", "luton", "cambridge", "st albans", "welwyn", "stevenage"}
+# Whitelist of genuine southbound termini from City Thameslink
+# Trains going south through Blackfriars → Elephant & Castle → beyond
+SOUTHBOUND_TERMINI = {
+    "sutton", "wimbledon", "brighton", "horsham", "gatwick",
+    "gatwick airport", "three bridges", "rainham",
+    "elephant", "elephant & castle", "blackfriars",
+    "tulse hill", "crystal palace", "norwood junction",
+    "east croydon", "purley", "redhill", "reigate",
+    "epsom", "dorking", "crawley", "littlehampton",
+    "worthing", "shoreham", "hove", "haywards heath",
+}
 
 
 def _get_scan_interval() -> timedelta:
@@ -62,7 +72,7 @@ def _svc_dest(svc: dict) -> str:
 
 def _is_southbound(svc: dict) -> bool:
     dest = _svc_dest(svc).lower()
-    return not any(kw in dest for kw in NORTHBOUND_KEYWORDS)
+    return any(kw in dest for kw in SOUTHBOUND_TERMINI)
 
 
 def _svc_time(svc: dict) -> datetime | None:

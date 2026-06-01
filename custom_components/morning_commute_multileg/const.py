@@ -22,11 +22,14 @@ HUXLEY_URL = (
 )
 HUXLEY_ROWS = 50
 
-# Northbound destinations at CTK — everything else is southbound
-# Southbound: Blackfriars, Elephant & Castle, Sutton, Wimbledon,
-#             Gatwick, Brighton, Horsham, Rainham, Three Bridges
-NORTHBOUND_KEYWORDS = {
-    "bedford", "luton", "cambridge", "st albans",
-    "welwyn", "stevenage", "kings cross", "peterborough",
-    "hertford", "hitchin", "letchworth", "baldock",
+# Whitelist of genuine southbound termini from City Thameslink
+# (trains that go south through Blackfriars → Elephant & Castle → beyond)
+SOUTHBOUND_TERMINI = {
+    "sutton", "wimbledon", "brighton", "horsham", "gatwick",
+    "gatwick airport", "three bridges", "rainham", "rainham (kent)",
+    "elephant", "elephant & castle", "blackfriars",
+    "tulse hill", "crystal palace", "norwood junction",
+    "east croydon", "purley", "redhill", "reigate",
+    "epsom", "dorking", "crawley", "littlehampton",
+    "worthing", "shoreham", "hove",
 }
