@@ -1,6 +1,7 @@
-"""Coordinator for Morning Commute Multileg - uses Huxley2/Darwin for 2-hour leg 2 window."""
+"""Coordinator for Morning Commute Multileg - Huxley2 for live leg2, HSP for leg2 history."""
 from __future__ import annotations
 
+import base64
 import logging
 from datetime import datetime, timedelta
 
@@ -11,7 +12,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
-    SOUTHBOUND_TERMINI,
     DOMAIN,
     LEG1_PREFIX,
     LEG2_STATION,
@@ -21,6 +21,7 @@ from .const import (
     SCAN_INTERVAL_OFFPEAK,
     SCAN_INTERVAL_NIGHT,
     DARWIN_TOKEN,
+    SOUTHBOUND_TERMINI,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,17 +32,16 @@ HUXLEY_URL = (
 )
 HUXLEY_ROWS = 50
 
-# Whitelist of genuine southbound termini from City Thameslink
-# Trains going south through Blackfriars → Elephant & Castle → beyond
-SOUTHBOUND_TERMINI = {
-    "sutton", "wimbledon", "brighton", "horsham", "gatwick",
-    "gatwick airport", "three bridges", "rainham",
-    "elephant", "elephant & castle", "blackfriars",
-    "tulse hill", "crystal palace", "norwood junction",
-    "east croydon", "purley", "redhill", "reigate",
-    "epsom", "dorking", "crawley", "littlehampton",
-    "worthing", "shoreham", "hove", "haywards heath",
-}
+# HSP — Historic Service Performance API
+HSP_URL      = "https://hsp-prod.rockshore.net/api/v1/serviceMetrics"
+HSP_USERNAME = "YOUR_NRE_USERNAME"
+HSP_PASSWORD = "YOUR_NRE_PASSWORD"
+# CTK → primary southbound termini (CRS codes)
+HSP_FROM     = "CTK"
+HSP_TO_LOCS  = ["BTN", "SUT", "HRH", "GTW", "TBD"]  # Brighton, Sutton, Horsham, Gatwick, Three Bridges
+HSP_OPERATOR = "TL"   # Thameslink
+# Fetch HSP once per hour (it's historical, no need to poll constantly)
+HSP_REFRESH_INTERVAL = timedelta(hours=1)
 
 
 def _get_scan_interval() -> timedelta:
@@ -76,15 +76,10 @@ def _is_southbound(svc: dict) -> bool:
 
 
 def _svc_time(svc: dict) -> datetime | None:
-    """Return best departure datetime from a Huxley service."""
     now = datetime.now().astimezone()
-    # etd is expected, std is scheduled
     for key in ("etd", "std"):
         val = (svc.get(key) or "").strip()
-        if val in ("", "Delayed", "Cancelled"):
-            continue
-        if val == "On time":
-            # fall through to std
+        if val in ("", "Delayed", "Cancelled", "On time"):
             continue
         try:
             h, m = map(int, val.split(":"))
@@ -94,7 +89,6 @@ def _svc_time(svc: dict) -> datetime | None:
             return dt
         except (ValueError, TypeError):
             continue
-    # etd = "On time" → use std
     std = (svc.get("std") or "").strip()
     if std:
         try:
@@ -120,7 +114,6 @@ def _parse_hhmm(hhmm: str, ref: datetime) -> datetime | None:
 
 
 def _build_leg2(southbound: list[dict], scheduled_arrival_str: str | None) -> dict:
-    """Build leg2 attributes for one train using its scheduled Farringdon arrival."""
     result = {
         "leg2_station": LEG2_STATION,
         "leg2_walk_mins": LEG2_WALK_MINS,
@@ -131,13 +124,10 @@ def _build_leg2(southbound: list[dict], scheduled_arrival_str: str | None) -> di
         "leg2_earliest_destination": None,
         "leg2_connection_mins": None,
     }
-
     if not southbound:
         return result
 
     now = datetime.now().astimezone()
-
-    # Upcoming southbound list
     upcoming = []
     for svc in southbound:
         dt = _svc_time(svc)
@@ -152,7 +142,6 @@ def _build_leg2(southbound: list[dict], scheduled_arrival_str: str | None) -> di
             f"{dt.strftime('%H:%M')} → {dest}" for dt, dest, _ in upcoming[:5]
         ]
 
-    # Per-train connection
     if not scheduled_arrival_str:
         return result
 
@@ -161,8 +150,7 @@ def _build_leg2(southbound: list[dict], scheduled_arrival_str: str | None) -> di
         return result
 
     earliest_board = arr_dt + timedelta(minutes=LEG2_WALK_MINS)
-
-    for dep_dt, dest, svc in upcoming:
+    for dep_dt, dest, _ in upcoming:
         if dep_dt >= earliest_board:
             wait = max(0, round((dep_dt - arr_dt).total_seconds() / 60) - LEG2_WALK_MINS)
             result["leg2_earliest_after_arrival"] = f"{dep_dt.strftime('%H:%M')} → {dest}"
@@ -181,53 +169,199 @@ def _build_leg2(southbound: list[dict], scheduled_arrival_str: str | None) -> di
 
 
 class MorningCommuteCoordinator(DataUpdateCoordinator):
-    """Reads leg 1 from my_rail_commute sensors; leg 2 from Huxley2/Darwin (2-hour window)."""
+    """Reads leg 1 from my_rail_commute; leg 2 live from Huxley2; leg 2 history from HSP."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         super().__init__(
             hass, _LOGGER, name=DOMAIN, update_interval=_get_scan_interval()
         )
         self.entry = entry
+        self._leg2_history: dict = {}
+        self._leg2_history_last_fetch: datetime | None = None
 
     async def _fetch_southbound(self) -> list[dict]:
-        """Fetch CTK departures from Huxley2, return southbound only."""
         url = HUXLEY_URL.format(rows=HUXLEY_ROWS, token=DARWIN_TOKEN)
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url, timeout=aiohttp.ClientTimeout(total=12)
-                ) as resp:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=12)) as resp:
                     if resp.status != 200:
-                        _LOGGER.warning("Huxley HTTP %s for %s", resp.status, url)
+                        _LOGGER.warning("Huxley HTTP %s", resp.status)
                         return []
                     data = await resp.json(content_type=None)
                     services = data.get("trainServices") or []
                     sb = [s for s in services if _is_southbound(s)]
-                    _LOGGER.debug(
-                        "Huxley CTK: %d total, %d southbound", len(services), len(sb)
-                    )
+                    _LOGGER.debug("Huxley CTK: %d total, %d southbound", len(services), len(sb))
                     return sb
         except Exception as err:
             _LOGGER.warning("Huxley fetch error: %s", err)
             return []
+
+    async def _fetch_leg2_history(self) -> dict:
+        """Fetch HSP reliability for CTK southbound routes, last 30 days.
+        
+        Returns dict with daily_breakdown, on_time_pct_today, on_time_pct_7day,
+        on_time_pct_30day, avg_delay_7day, best_day, worst_day — same schema as leg 1.
+        """
+        now = datetime.now()
+        # Only fetch once per hour
+        if (
+            self._leg2_history_last_fetch is not None
+            and (now - self._leg2_history_last_fetch) < HSP_REFRESH_INTERVAL
+            and self._leg2_history
+        ):
+            return self._leg2_history
+
+        today = now.date()
+        from_date = (today - timedelta(days=30)).strftime("%Y-%m-%d")
+        to_date = today.strftime("%Y-%m-%d")
+
+        auth = base64.b64encode(
+            f"{HSP_USERNAME}:{HSP_PASSWORD}".encode()
+        ).decode()
+        headers = {
+            "Authorization": f"Basic {auth}",
+            "Content-Type": "application/json",
+        }
+
+        # Aggregate results across multiple southbound termini
+        all_services: list[dict] = []
+        try:
+            async with aiohttp.ClientSession() as session:
+                for to_loc in HSP_TO_LOCS:
+                    payload = {
+                        "from_loc": HSP_FROM,
+                        "to_loc": to_loc,
+                        "from_time": "0500",
+                        "to_time": "2300",
+                        "from_date": from_date,
+                        "to_date": to_date,
+                        "days": "WEEKDAY",
+                        "tolerance": [3, 5, 10, 15, 30],
+                    }
+                    if HSP_OPERATOR:
+                        payload["toc_filter"] = [HSP_OPERATOR]
+                    try:
+                        async with session.post(
+                            HSP_URL,
+                            json=payload,
+                            headers=headers,
+                            timeout=aiohttp.ClientTimeout(total=15),
+                        ) as resp:
+                            if resp.status == 200:
+                                data = await resp.json(content_type=None)
+                                services = data.get("Services", [])
+                                all_services.extend(services)
+                                _LOGGER.debug(
+                                    "HSP CTK→%s: %d services", to_loc, len(services)
+                                )
+                            else:
+                                body = await resp.text()
+                                _LOGGER.warning(
+                                    "HSP HTTP %s for CTK→%s: %s",
+                                    resp.status, to_loc, body[:200]
+                                )
+                    except Exception as err:
+                        _LOGGER.warning("HSP fetch error CTK→%s: %s", to_loc, err)
+        except Exception as err:
+            _LOGGER.warning("HSP session error: %s", err)
+
+        if not all_services:
+            return self._leg2_history  # return cached if available
+
+        # Aggregate by date
+        by_date: dict[str, dict] = {}
+        for svc in all_services:
+            for loc_data in svc.get("serviceAttributesMetrics", []):
+                date_str = loc_data.get("date", "")
+                if not date_str:
+                    continue
+                if date_str not in by_date:
+                    by_date[date_str] = {"total": 0, "on_time": 0, "cancelled": 0, "delays": []}
+                total = loc_data.get("num_not_cancelled", 0) + loc_data.get("num_cancelled", 0)
+                # on_time at 5 min tolerance (index 1 in tolerance=[3,5,10,15,30])
+                on_time = loc_data.get("num_on_time", 0)
+                # Try tolerance-based: services within 5 min
+                metrics = loc_data.get("tolerance_results", [])
+                if metrics and len(metrics) > 1:
+                    on_time = metrics[1].get("num_on_time", on_time)
+                by_date[date_str]["total"] += total
+                by_date[date_str]["on_time"] += on_time
+                by_date[date_str]["cancelled"] += loc_data.get("num_cancelled", 0)
+                avg_delay = loc_data.get("avg_delay_mins")
+                if avg_delay is not None:
+                    by_date[date_str]["delays"].append(float(avg_delay))
+
+        # Build daily breakdown
+        daily_breakdown = []
+        for date_str in sorted(by_date.keys())[-30:]:
+            d = by_date[date_str]
+            pct = round(d["on_time"] / d["total"] * 100, 2) if d["total"] > 0 else None
+            avg_delay = round(sum(d["delays"]) / len(d["delays"]), 2) if d["delays"] else None
+            daily_breakdown.append({
+                "date": date_str,
+                "on_time_pct": pct,
+                "avg_delay_minutes": avg_delay,
+                "total_observations": d["total"],
+            })
+
+        # Calculate summary stats
+        days_with_data = [d for d in daily_breakdown if d["on_time_pct"] is not None]
+        last_7 = [d for d in days_with_data if d["date"] >= (today - timedelta(days=7)).strftime("%Y-%m-%d")]
+        last_30 = days_with_data
+
+        def avg_pct(days):
+            vals = [d["on_time_pct"] for d in days if d["on_time_pct"] is not None]
+            return round(sum(vals) / len(vals), 1) if vals else None
+
+        def avg_delay(days):
+            vals = [d["avg_delay_minutes"] for d in days if d["avg_delay_minutes"] is not None]
+            return round(sum(vals) / len(vals), 1) if vals else None
+
+        today_str = today.strftime("%Y-%m-%d")
+        today_data = next((d for d in daily_breakdown if d["date"] == today_str), None)
+
+        best = max(days_with_data, key=lambda d: d["on_time_pct"] or 0) if days_with_data else None
+        worst = min(days_with_data, key=lambda d: d["on_time_pct"] if d["on_time_pct"] is not None else 100) if days_with_data else None
+
+        result = {
+            "state": str(avg_pct(last_7) or ""),
+            "on_time_pct_today": today_data["on_time_pct"] if today_data else None,
+            "on_time_pct_7day": avg_pct(last_7),
+            "on_time_pct_30day": avg_pct(last_30),
+            "avg_delay_7day": avg_delay(last_7),
+            "daily_breakdown": daily_breakdown,
+            "best_day": best,
+            "worst_day": worst,
+            "days_with_data_7day": len(last_7),
+            "days_with_data_30day": len(last_30),
+        }
+
+        self._leg2_history = result
+        self._leg2_history_last_fetch = now
+        _LOGGER.info(
+            "HSP leg2: 7-day on-time %.1f%%, 30-day %.1f%%",
+            result["on_time_pct_7day"] or 0,
+            result["on_time_pct_30day"] or 0,
+        )
+        return result
 
     async def _async_update_data(self) -> dict:
         self.update_interval = _get_scan_interval()
 
         try:
             southbound = await self._fetch_southbound()
+            leg2_history = await self._fetch_leg2_history()
             data = {}
 
-            s_id  = f"sensor.{LEG1_PREFIX}_summary"
-            st_id = f"sensor.{LEG1_PREFIX}_status"
-            nt_id = f"sensor.{LEG1_PREFIX}_next_train"
-            hr_id = f"sensor.{LEG1_PREFIX}_historical_reliability"
-            hd_id = f"sensor.{LEG1_PREFIX}_historical_delays"
+            s_id   = f"sensor.{LEG1_PREFIX}_summary"
+            st_id  = f"sensor.{LEG1_PREFIX}_status"
+            nt_id  = f"sensor.{LEG1_PREFIX}_next_train"
+            hr_id  = f"sensor.{LEG1_PREFIX}_historical_reliability"
+            hd_id  = f"sensor.{LEG1_PREFIX}_historical_delays"
             dis_id = f"binary_sensor.{LEG1_PREFIX}_has_disruption"
 
             next_arr = _attr(self.hass, nt_id, "scheduled_arrival")
 
-            # Summary
             data["summary"] = {
                 "state": _state(self.hass, s_id),
                 "origin": _attr(self.hass, s_id, "origin"),
@@ -259,7 +393,6 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
             }
             data["summary"].update(_build_leg2(southbound, next_arr))
 
-            # Status
             data["status"] = {
                 "state": _state(self.hass, st_id),
                 "total_trains": _attr(self.hass, st_id, "total_trains"),
@@ -277,7 +410,6 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
             }
             data["status"].update(_build_leg2(southbound, next_arr))
 
-            # Trains 1–10
             for i in range(1, NUM_TRAINS + 1):
                 t_id = f"sensor.{LEG1_PREFIX}_train_{i}"
                 t_arr = _attr(self.hass, t_id, "scheduled_arrival")
@@ -308,7 +440,6 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
 
             data["next_train"] = dict(data["train_1"])
 
-            # Historical
             data["historical_reliability"] = {
                 "state": _state(self.hass, hr_id),
                 "on_time_pct_today": _attr(self.hass, hr_id, "on_time_pct_today"),
@@ -322,6 +453,7 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "days_with_data_30day": _attr(self.hass, hr_id, "days_with_data_30day"),
                 "daily_breakdown": _attr(self.hass, hr_id, "daily_breakdown"),
             }
+
             data["historical_delays"] = {
                 "state": _state(self.hass, hd_id),
                 "avg_delay_today": _attr(self.hass, hd_id, "avg_delay_today"),
@@ -330,6 +462,7 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "best_day": _attr(self.hass, hd_id, "best_day"),
                 "days_with_data_7day": _attr(self.hass, hd_id, "days_with_data_7day"),
             }
+
             data["has_disruption"] = {
                 "state": _state(self.hass, dis_id),
                 "current_status": _attr(self.hass, dis_id, "current_status"),
@@ -339,6 +472,9 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "disruption_reasons": _attr(self.hass, dis_id, "disruption_reasons"),
                 "last_checked": _attr(self.hass, dis_id, "last_checked"),
             }
+
+            # Leg 2 historical reliability from HSP
+            data["leg2_historical_reliability"] = leg2_history
 
             return data
 
