@@ -226,7 +226,8 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
         # Aggregate results across multiple southbound termini
         all_services: list[dict] = []
         try:
-            async with aiohttp.ClientSession() as session:
+            connector = aiohttp.TCPConnector(ssl=False)
+            async with aiohttp.ClientSession(connector=connector) as session:
                 for to_loc in HSP_TO_LOCS:
                     payload = {
                         "from_loc": HSP_FROM,
@@ -261,7 +262,7 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                                     resp.status, to_loc, body[:200]
                                 )
                     except Exception as err:
-                        _LOGGER.warning("HSP fetch error CTK→%s: %s", to_loc, err)
+                        _LOGGER.warning("HSP fetch error CTK→%s: %s (%s)", to_loc, type(err).__name__, err)
         except Exception as err:
             _LOGGER.warning("HSP session error: %s", err)
 
@@ -269,6 +270,7 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
             return self._leg2_history  # return cached if available
 
         # Aggregate by date
+        # HSP structure: Services[].serviceAttributesMetrics[].Metrics[].{tolerance_value,num_tolerance,percent_tolerance}
         by_date: dict[str, dict] = {}
         for svc in all_services:
             for loc_data in svc.get("serviceAttributesMetrics", []):
@@ -276,32 +278,27 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 if not date_str:
                     continue
                 if date_str not in by_date:
-                    by_date[date_str] = {"total": 0, "on_time": 0, "cancelled": 0, "delays": []}
-                total = loc_data.get("num_not_cancelled", 0) + loc_data.get("num_cancelled", 0)
-                # on_time at 5 min tolerance (index 1 in tolerance=[3,5,10,15,30])
-                on_time = loc_data.get("num_on_time", 0)
-                # Try tolerance-based: services within 5 min
-                metrics = loc_data.get("tolerance_results", [])
-                if metrics and len(metrics) > 1:
-                    on_time = metrics[1].get("num_on_time", on_time)
-                by_date[date_str]["total"] += total
-                by_date[date_str]["on_time"] += on_time
-                by_date[date_str]["cancelled"] += loc_data.get("num_cancelled", 0)
-                avg_delay = loc_data.get("avg_delay_mins")
-                if avg_delay is not None:
-                    by_date[date_str]["delays"].append(float(avg_delay))
+                    by_date[date_str] = {"pct_sum": 0.0, "pct_count": 0}
+                # Find 5-min tolerance metric
+                metrics = loc_data.get("Metrics", [])
+                for m in metrics:
+                    if m.get("tolerance_value") == 5:
+                        pct = m.get("percent_tolerance")
+                        if pct is not None:
+                            by_date[date_str]["pct_sum"] += float(pct)
+                            by_date[date_str]["pct_count"] += 1
+                        break
 
         # Build daily breakdown
         daily_breakdown = []
         for date_str in sorted(by_date.keys())[-30:]:
             d = by_date[date_str]
-            pct = round(d["on_time"] / d["total"] * 100, 2) if d["total"] > 0 else None
-            avg_delay = round(sum(d["delays"]) / len(d["delays"]), 2) if d["delays"] else None
+            pct = round(d["pct_sum"] / d["pct_count"], 2) if d["pct_count"] > 0 else None
             daily_breakdown.append({
                 "date": date_str,
                 "on_time_pct": pct,
-                "avg_delay_minutes": avg_delay,
-                "total_observations": d["total"],
+                "avg_delay_minutes": None,
+                "total_observations": d["pct_count"],
             })
 
         # Calculate summary stats
