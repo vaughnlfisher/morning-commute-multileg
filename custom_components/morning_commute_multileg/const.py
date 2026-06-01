@@ -2,14 +2,28 @@
 
 DOMAIN = "morning_commute_multileg"
 
-LEG1_PREFIX = "twyford_to_farringdon"
-LEG2_SENSOR = "sensor.london_tfl_thameslink_910gctmslnk"
-LEG2_STATION = "City Thameslink"
-LEG2_WALK_MINS = 5  # walk Farringdon → City Thameslink
+LEG1_PREFIX    = "twyford_to_farringdon"
+LEG2_STATION   = "City Thameslink"
+LEG2_WALK_MINS = 5
 
-COMMUTE_PREFIX = "morning_commute"
 NUM_TRAINS = 10
 
-SCAN_INTERVAL_PEAK    = 120   # 2 min  06-10, 16-20
-SCAN_INTERVAL_OFFPEAK = 300   # 5 min
-SCAN_INTERVAL_NIGHT   = 900   # 15 min 23-05
+SCAN_INTERVAL_PEAK    = 120
+SCAN_INTERVAL_OFFPEAK = 300
+SCAN_INTERVAL_NIGHT   = 900
+
+# Darwin token for Huxley2 (Rail Data Marketplace)
+DARWIN_TOKEN = "sGXTmObEF5yecAp8wINtUu1LUB9b7j9bhpBTycE23EkvGnHH"
+
+# Huxley2 Darwin JSON proxy — 2-hour window for CTK (City Thameslink)
+HUXLEY_URL = (
+    "https://huxley2.azurewebsites.net/departures/CTK/{rows}"
+    "?timeWindow=120&accessToken={token}"
+)
+HUXLEY_ROWS = 50
+
+# Southbound filter — exclude destinations that go north from CTK
+NORTHBOUND_KEYWORDS = {
+    "bedford", "luton", "cambridge", "st albans",
+    "welwyn", "stevenage", "kings cross",
+}
