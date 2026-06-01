@@ -1,0 +1,13 @@
+{
+  "domain": "morning_commute_multileg",
+  "name": "Morning Commute Multileg",
+  "version": "1.0.0",
+  "description": "Multi-leg commute sensor: mirrors my_rail_commute (Twyford→Farringdon) and appends TfL Thameslink (Farringdon→City Thameslink) leg data to every entity.",
+  "documentation": "https://github.com/VaughnFisher/morning-commute-multileg",
+  "issue_tracker": "https://github.com/VaughnFisher/morning-commute-multileg/issues",
+  "dependencies": [],
+  "codeowners": ["@VaughnFisher"],
+  "requirements": [],
+  "iot_class": "local_polling",
+  "config_flow": true
+}

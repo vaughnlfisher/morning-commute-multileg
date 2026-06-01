@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Morning Commute Multileg",
+        "description": "Creates multileg commute sensors combining:\n\n**Leg 1**: Twyford → Farringdon (Elizabeth line via my_rail_commute)\n**Walk**: 5 min Farringdon → City Thameslink\n**Leg 2**: City Thameslink (Thameslink northbound via TfL sensor)\n\nAll 16 entities from my_rail_commute are mirrored with Thameslink connection data appended to every sensor."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only one Morning Commute Multileg instance is supported."
+    }
+  }
+}
