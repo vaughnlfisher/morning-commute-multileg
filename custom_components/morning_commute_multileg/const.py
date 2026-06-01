@@ -13,7 +13,7 @@ SCAN_INTERVAL_OFFPEAK = 300
 SCAN_INTERVAL_NIGHT   = 900
 
 # Darwin token for Huxley2 (Rail Data Marketplace)
-DARWIN_TOKEN = "sGXTmObEF5yecAp8wINtUu1LUB9b7j9bhpBTycE23EkvGnHH"
+DARWIN_TOKEN = "001105bc-e005-48d1-a443-595d23aba5aa"
 
 # Huxley2 Darwin JSON proxy — 2-hour window for CTK (City Thameslink)
 HUXLEY_URL = (
