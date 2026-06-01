@@ -22,8 +22,11 @@ HUXLEY_URL = (
 )
 HUXLEY_ROWS = 50
 
-# Southbound filter — exclude destinations that go north from CTK
+# Northbound destinations at CTK — everything else is southbound
+# Southbound: Blackfriars, Elephant & Castle, Sutton, Wimbledon,
+#             Gatwick, Brighton, Horsham, Rainham, Three Bridges
 NORTHBOUND_KEYWORDS = {
     "bedford", "luton", "cambridge", "st albans",
-    "welwyn", "stevenage", "kings cross",
+    "welwyn", "stevenage", "kings cross", "peterborough",
+    "hertford", "hitchin", "letchworth", "baldock",
 }
