@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -22,9 +22,12 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Southbound = designation "2": Blackfriars, Elephant & Castle, Sutton, Brighton etc.
+LEG2_DESIGNATION = "2"
+
 
 def _get_scan_interval() -> timedelta:
-    """Return scan interval based on time of day, mirroring my_rail_commute logic."""
+    """Return scan interval mirroring my_rail_commute peak/off-peak logic."""
     hour = datetime.now().hour
     if 6 <= hour < 10 or 16 <= hour < 20:
         return timedelta(seconds=SCAN_INTERVAL_PEAK)
@@ -36,9 +39,7 @@ def _get_scan_interval() -> timedelta:
 def _attr(hass: HomeAssistant, entity_id: str, attr: str):
     """Safe attribute getter."""
     state = hass.states.get(entity_id)
-    if state is None:
-        return None
-    return state.attributes.get(attr)
+    return state.attributes.get(attr) if state else None
 
 
 def _state(hass: HomeAssistant, entity_id: str) -> str | None:
@@ -47,87 +48,167 @@ def _state(hass: HomeAssistant, entity_id: str) -> str | None:
     return state.state if state else None
 
 
-def _build_leg2(hass: HomeAssistant, scheduled_arrival_str: str | None) -> dict:
+def _parse_hhmm(hhmm: str, reference: datetime) -> datetime | None:
     """
-    Build the leg2 dict from the TfL Thameslink sensor.
+    Parse "HH:MM" into a datetime on the same date as reference.
+    Handles rollover past midnight (e.g. arrival 00:10 when reference is 23:50).
+    """
+    try:
+        h, m = map(int, hhmm.split(":"))
+        dt = reference.replace(hour=h, minute=m, second=0, microsecond=0)
+        # If parsed time is more than 6 hours before reference, assume next day
+        if (reference - dt).total_seconds() > 6 * 3600:
+            dt += timedelta(days=1)
+        return dt
+    except (ValueError, TypeError, AttributeError):
+        return None
 
-    leg2_next_departure       : HH:MM of the very next departure from City Thameslink
-    leg2_next_destination     : destination of that departure
-    leg2_northbound_departures: list of up to 5 northbound departures (designation '1')
-    leg2_earliest_after_arrival: first northbound departure reachable after arriving at
-                                 Farringdon + LEG2_WALK_MINS walk
-    leg2_station              : 'City Thameslink'
-    leg2_walk_mins            : walk minutes Farringdon → City Thameslink
+
+def _extrapolate_southbound(
+    known_southbound: list[dict],
+    target_dt: datetime,
+) -> str | None:
+    """
+    When target_dt is beyond the TfL live window, extrapolate using the pattern
+    of known southbound departures (typically every 15–30 min off-peak).
+    Returns "HH:MM → Destination" or None.
+    """
+    if not known_southbound:
+        return None
+
+    # Build list of (datetime, destination) from known departures
+    parsed = []
+    for dep in known_southbound:
+        try:
+            dep_dt = datetime.fromisoformat(dep["expected"]).astimezone()
+            dest = dep.get("destination", "").replace(" Rail Station", "")
+            parsed.append((dep_dt, dest))
+        except (KeyError, ValueError, TypeError):
+            continue
+
+    if not parsed:
+        return None
+
+    parsed.sort(key=lambda x: x[0])
+    last_dt, last_dest = parsed[-1]
+
+    # Calculate median interval between known departures
+    if len(parsed) >= 2:
+        intervals = [
+            (parsed[i][0] - parsed[i - 1][0]).total_seconds()
+            for i in range(1, len(parsed))
+            if (parsed[i][0] - parsed[i - 1][0]).total_seconds() > 0
+        ]
+        median_interval = sorted(intervals)[len(intervals) // 2] if intervals else 1800
+        # Clamp to realistic range (8–35 min)
+        interval_secs = max(480, min(2100, median_interval))
+    else:
+        interval_secs = 1800  # assume 30 min if only one known departure
+
+    # Project forward until we reach or pass target_dt
+    projected_dt = last_dt
+    projected_dest = last_dest
+    # Cycle through destinations in sequence (they usually alternate)
+    dest_cycle = [d for _, d in parsed]
+    step = 0
+    while projected_dt < target_dt:
+        step += 1
+        projected_dt += timedelta(seconds=interval_secs)
+        projected_dest = dest_cycle[step % len(dest_cycle)]
+        if step > 20:  # safety cap
+            break
+
+    return f"~{projected_dt.strftime('%H:%M')} → {projected_dest} (est.)"
+
+
+def _build_leg2_for_train(
+    departures: list[dict],
+    southbound: list[dict],
+    scheduled_arrival_str: str | None,
+) -> dict:
+    """
+    Build leg2 attributes for ONE specific train, given its scheduled arrival
+    at Farringdon and the full TfL departures list.
+
+    southbound  : pre-filtered list of designation=="2" departures
+    Returns a dict of leg2_* keys.
     """
     result = {
         "leg2_station": LEG2_STATION,
         "leg2_walk_mins": LEG2_WALK_MINS,
-        "leg2_next_departure": None,
-        "leg2_next_destination": None,
-        "leg2_northbound_departures": [],
+        "leg2_next_southbound_departure": None,
+        "leg2_next_southbound_destination": None,
+        "leg2_southbound_departures": [],
         "leg2_earliest_after_arrival": None,
+        "leg2_earliest_destination": None,
+        "leg2_connection_mins": None,   # minutes wait at City Thameslink
     }
 
-    tfl_state = hass.states.get(LEG2_SENSOR)
-    if tfl_state is None:
-        return result
-
-    departures = tfl_state.attributes.get("departures")
-    if not departures:
-        return result
-
-    # Next departure (any direction)
-    first = departures[0]
-    try:
-        first_dt = datetime.fromisoformat(first["expected"])
-        result["leg2_next_departure"] = first_dt.astimezone().strftime("%H:%M")
-        result["leg2_next_destination"] = (
-            first.get("destination", "").replace(" Rail Station", "")
-        )
-    except (KeyError, ValueError, TypeError):
-        pass
-
-    # Northbound (designation == '1')
-    northbound = []
-    for dep in departures:
+    # Next southbound right now (context, not per-train)
+    if southbound:
         try:
-            if dep.get("line", {}).get("designation") == "1":
-                dep_dt = datetime.fromisoformat(dep["expected"])
-                dest = dep.get("destination", "").replace(" Rail Station", "")
-                northbound.append(
-                    f"{dep_dt.astimezone().strftime('%H:%M')} → {dest}"
-                )
+            first_dt = datetime.fromisoformat(southbound[0]["expected"]).astimezone()
+            result["leg2_next_southbound_departure"] = first_dt.strftime("%H:%M")
+            result["leg2_next_southbound_destination"] = (
+                southbound[0].get("destination", "").replace(" Rail Station", "")
+            )
+        except (KeyError, ValueError, TypeError):
+            pass
+
+    # All southbound departures as strings
+    sb_list = []
+    for dep in southbound:
+        try:
+            dep_dt = datetime.fromisoformat(dep["expected"]).astimezone()
+            dest = dep.get("destination", "").replace(" Rail Station", "")
+            sb_list.append(f"{dep_dt.strftime('%H:%M')} → {dest}")
         except (KeyError, ValueError, TypeError):
             continue
-    result["leg2_northbound_departures"] = northbound[:5]
+    result["leg2_southbound_departures"] = sb_list[:5]
 
-    # Earliest reachable after arrival
-    if scheduled_arrival_str:
+    # Per-train: earliest southbound reachable after this train arrives at Farringdon
+    if not scheduled_arrival_str:
+        return result
+
+    now = datetime.now().astimezone()
+    arr_dt = _parse_hhmm(scheduled_arrival_str, now)
+    if not arr_dt:
+        return result
+
+    # Earliest possible board time = arrival + walk
+    earliest_board = arr_dt + timedelta(minutes=LEG2_WALK_MINS)
+
+    # Search live data first
+    found = None
+    for dep in southbound:
         try:
-            # scheduled_arrival is "HH:MM" – build a datetime for today
-            now = datetime.now().astimezone()
-            h, m = map(int, scheduled_arrival_str.split(":"))
-            arr_dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
-            earliest = arr_dt + timedelta(minutes=LEG2_WALK_MINS)
-            for dep in departures:
-                try:
-                    dep_dt = datetime.fromisoformat(dep["expected"]).astimezone()
-                    if dep_dt >= earliest:
-                        dest = dep.get("destination", "").replace(" Rail Station", "")
-                        result["leg2_earliest_after_arrival"] = (
-                            f"{dep_dt.strftime('%H:%M')} → {dest}"
-                        )
-                        break
-                except (KeyError, ValueError, TypeError):
-                    continue
-        except (AttributeError, ValueError, TypeError):
-            pass
+            dep_dt = datetime.fromisoformat(dep["expected"]).astimezone()
+            if dep_dt >= earliest_board:
+                dest = dep.get("destination", "").replace(" Rail Station", "")
+                found = (dep_dt, dest)
+                break
+        except (KeyError, ValueError, TypeError):
+            continue
+
+    if found:
+        dep_dt, dest = found
+        wait_mins = round((dep_dt - arr_dt).total_seconds() / 60 - LEG2_WALK_MINS)
+        result["leg2_earliest_after_arrival"] = f"{dep_dt.strftime('%H:%M')} → {dest}"
+        result["leg2_earliest_destination"] = dest
+        result["leg2_connection_mins"] = max(0, wait_mins)
+    else:
+        # TfL data doesn't extend far enough — extrapolate
+        extrapolated = _extrapolate_southbound(southbound, earliest_board)
+        if extrapolated:
+            result["leg2_earliest_after_arrival"] = extrapolated
+            result["leg2_earliest_destination"] = extrapolated.split(" → ")[-1] if " → " in extrapolated else None
+            result["leg2_connection_mins"] = None  # unknown when extrapolated
 
     return result
 
 
 class MorningCommuteCoordinator(DataUpdateCoordinator):
-    """Coordinator: polls both legs and merges into a unified data dict."""
+    """Coordinator: reads both legs, calculates per-train Thameslink connections."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         super().__init__(
@@ -139,17 +220,32 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
         self.entry = entry
 
     async def _async_update_data(self) -> dict:
-        """Fetch and merge both legs. Returns the full data dict."""
-
-        # Adjust polling interval dynamically (peak / off-peak / night)
+        """Fetch and merge both legs."""
         self.update_interval = _get_scan_interval()
 
         try:
             data = {}
 
+            # ── Read TfL sensor once, build southbound list ──────────
+            tfl_state = self.hass.states.get(LEG2_SENSOR)
+            all_departures = []
+            southbound = []
+            if tfl_state:
+                all_departures = tfl_state.attributes.get("departures") or []
+                southbound = [
+                    d for d in all_departures
+                    if d.get("line", {}).get("designation") == LEG2_DESIGNATION
+                ]
+                _LOGGER.debug(
+                    "TfL sensor: %d total departures, %d southbound",
+                    len(all_departures), len(southbound),
+                )
+
             # ── SUMMARY ──────────────────────────────────────────────
             s_id = f"sensor.{LEG1_PREFIX}_summary"
-            s_state = hass.states.get(s_id) if False else self.hass.states.get(s_id)
+            nt_id = f"sensor.{LEG1_PREFIX}_next_train"
+            next_arr = _attr(self.hass, nt_id, "scheduled_arrival")
+
             data["summary"] = {
                 "state": _state(self.hass, s_id),
                 "origin": _attr(self.hass, s_id, "origin"),
@@ -179,11 +275,9 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "reverse_worst_day": _attr(self.hass, s_id, "reverse_worst_day"),
                 "reverse_best_day": _attr(self.hass, s_id, "reverse_best_day"),
             }
-            # Inject leg2 using next_train's scheduled_arrival
-            next_arr = None
-            nt_id = f"sensor.{LEG1_PREFIX}_next_train"
-            next_arr = _attr(self.hass, nt_id, "scheduled_arrival")
-            data["summary"].update(_build_leg2(self.hass, next_arr))
+            data["summary"].update(
+                _build_leg2_for_train(all_departures, southbound, next_arr)
+            )
 
             # ── STATUS ───────────────────────────────────────────────
             st_id = f"sensor.{LEG1_PREFIX}_status"
@@ -202,14 +296,18 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "destination_name": _attr(self.hass, st_id, "destination_name"),
                 "last_updated": _attr(self.hass, st_id, "last_updated"),
             }
-            data["status"].update(_build_leg2(self.hass, next_arr))
+            data["status"].update(
+                _build_leg2_for_train(all_departures, southbound, next_arr)
+            )
 
-            # ── NEXT TRAIN + TRAINS 1-10 ─────────────────────────────
+            # ── TRAINS 1-10 (each with its own per-train leg2) ───────
             for i in range(1, NUM_TRAINS + 1):
                 t_id = f"sensor.{LEG1_PREFIX}_train_{i}"
+                t_state = _state(self.hass, t_id)
                 t_arr = _attr(self.hass, t_id, "scheduled_arrival")
+
                 entry = {
-                    "state": _state(self.hass, t_id),
+                    "state": t_state,
                     "train_number": i,
                     "total_trains": _attr(self.hass, t_id, "total_trains"),
                     "departure_time": _attr(self.hass, t_id, "departure_time"),
@@ -230,7 +328,11 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                     "cancellation_reason": _attr(self.hass, t_id, "cancellation_reason"),
                     "delay_reason": _attr(self.hass, t_id, "delay_reason"),
                 }
-                entry.update(_build_leg2(self.hass, t_arr))
+
+                # Per-train leg2 — uses that train's own scheduled_arrival
+                entry.update(
+                    _build_leg2_for_train(all_departures, southbound, t_arr)
+                )
                 data[f"train_{i}"] = entry
 
             # next_train mirrors train_1
@@ -251,7 +353,6 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "days_with_data_30day": _attr(self.hass, hr_id, "days_with_data_30day"),
                 "daily_breakdown": _attr(self.hass, hr_id, "daily_breakdown"),
             }
-            data["historical_reliability"].update(_build_leg2(self.hass, next_arr))
 
             # ── HISTORICAL DELAYS ────────────────────────────────────
             hd_id = f"sensor.{LEG1_PREFIX}_historical_delays"
@@ -263,7 +364,6 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "best_day": _attr(self.hass, hd_id, "best_day"),
                 "days_with_data_7day": _attr(self.hass, hd_id, "days_with_data_7day"),
             }
-            data["historical_delays"].update(_build_leg2(self.hass, next_arr))
 
             # ── DISRUPTION BINARY SENSOR ─────────────────────────────
             dis_id = f"binary_sensor.{LEG1_PREFIX}_has_disruption"
@@ -276,7 +376,6 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "disruption_reasons": _attr(self.hass, dis_id, "disruption_reasons"),
                 "last_checked": _attr(self.hass, dis_id, "last_checked"),
             }
-            data["has_disruption"].update(_build_leg2(self.hass, next_arr))
 
             return data
 
