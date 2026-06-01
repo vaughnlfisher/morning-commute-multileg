@@ -38,7 +38,7 @@ HSP_USERNAME = "YOUR_NRE_USERNAME"
 HSP_PASSWORD = "YOUR_NRE_PASSWORD"
 # CTK → primary southbound termini (CRS codes)
 HSP_FROM     = "CTK"
-HSP_TO_LOCS  = ["BTN", "SUT", "HRH", "GTW", "TBD"]  # Brighton, Sutton, Horsham, Gatwick, Three Bridges
+HSP_TO_LOCS  = ["SUT", "BTN"]  # Sutton + Brighton cover bulk of southbound Thameslink
 HSP_OPERATOR = "TL"   # Thameslink
 # Fetch HSP once per hour (it's historical, no need to poll constantly)
 HSP_REFRESH_INTERVAL = timedelta(hours=1)
@@ -232,8 +232,8 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                     payload = {
                         "from_loc": HSP_FROM,
                         "to_loc": to_loc,
-                        "from_time": "0500",
-                        "to_time": "2300",
+                        "from_time": "0600",
+                        "to_time": "1000",
                         "from_date": from_date,
                         "to_date": to_date,
                         "days": "WEEKDAY",
@@ -246,7 +246,7 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                             HSP_URL,
                             json=payload,
                             headers=headers,
-                            timeout=aiohttp.ClientTimeout(total=15),
+                            timeout=aiohttp.ClientTimeout(total=45),
                         ) as resp:
                             if resp.status == 200:
                                 data = await resp.json(content_type=None)
