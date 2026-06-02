@@ -273,7 +273,11 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
         # HSP structure: Services[].serviceAttributesMetrics[].Metrics[].{tolerance_value,num_tolerance,percent_tolerance}
         by_date: dict[str, dict] = {}
         for svc in all_services:
+            if not isinstance(svc, dict):
+                continue
             for loc_data in svc.get("serviceAttributesMetrics", []):
+                if not isinstance(loc_data, dict):
+                    continue
                 date_str = loc_data.get("date", "")
                 if not date_str:
                     continue
@@ -281,7 +285,11 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                     by_date[date_str] = {"pct_sum": 0.0, "pct_count": 0}
                 # Find 5-min tolerance metric
                 metrics = loc_data.get("Metrics", [])
+                if not isinstance(metrics, list):
+                    continue
                 for m in metrics:
+                    if not isinstance(m, dict):
+                        continue
                     if m.get("tolerance_value") == 5:
                         pct = m.get("percent_tolerance")
                         if pct is not None:
