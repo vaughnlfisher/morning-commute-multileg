@@ -38,7 +38,7 @@ HSP_USERNAME = "YOUR_NRE_USERNAME"
 HSP_PASSWORD = "YOUR_NRE_PASSWORD"
 # CTK → primary southbound termini (CRS codes)
 HSP_FROM     = "CTK"
-HSP_TO_LOCS  = ["SUT", "BTN"]  # Sutton + Brighton cover bulk of southbound Thameslink
+HSP_TO_LOCS  = ["EPH"]  # Elephant & Castle — confirmed 32 services, southbound from CTK
 HSP_OPERATOR = "TL"   # Thameslink
 # Fetch HSP once per hour (it's historical, no need to poll constantly)
 HSP_REFRESH_INTERVAL = timedelta(hours=1)
