@@ -270,32 +270,35 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
             return self._leg2_history  # return cached if available
 
         # Aggregate by date
-        # HSP structure: Services[].serviceAttributesMetrics[].Metrics[].{tolerance_value,num_tolerance,percent_tolerance}
+        # HSP structure: Services[].{serviceAttributesMetrics: {date: str, ...}, Metrics: [{tolerance_value, percent_tolerance}]}
         by_date: dict[str, dict] = {}
         for svc in all_services:
             if not isinstance(svc, dict):
                 continue
-            for loc_data in svc.get("serviceAttributesMetrics", []):
-                if not isinstance(loc_data, dict):
+            # serviceAttributesMetrics is a DICT (not list) with date, origin, destination etc.
+            loc_data = svc.get("serviceAttributesMetrics", {})
+            if isinstance(loc_data, list) and loc_data:
+                loc_data = loc_data[0]  # handle both formats
+            if not isinstance(loc_data, dict):
+                continue
+            date_str = loc_data.get("date", "")
+            if not date_str:
+                continue
+            if date_str not in by_date:
+                by_date[date_str] = {"pct_sum": 0.0, "pct_count": 0}
+            # Metrics is top-level in the service object
+            metrics = svc.get("Metrics", [])
+            if not isinstance(metrics, list):
+                continue
+            for m in metrics:
+                if not isinstance(m, dict):
                     continue
-                date_str = loc_data.get("date", "")
-                if not date_str:
-                    continue
-                if date_str not in by_date:
-                    by_date[date_str] = {"pct_sum": 0.0, "pct_count": 0}
-                # Find 5-min tolerance metric
-                metrics = loc_data.get("Metrics", [])
-                if not isinstance(metrics, list):
-                    continue
-                for m in metrics:
-                    if not isinstance(m, dict):
-                        continue
-                    if m.get("tolerance_value") == 5:
-                        pct = m.get("percent_tolerance")
-                        if pct is not None:
-                            by_date[date_str]["pct_sum"] += float(pct)
-                            by_date[date_str]["pct_count"] += 1
-                        break
+                if m.get("tolerance_value") == 5:
+                    pct = m.get("percent_tolerance")
+                    if pct is not None:
+                        by_date[date_str]["pct_sum"] += float(pct)
+                        by_date[date_str]["pct_count"] += 1
+                    break
 
         # Build daily breakdown
         daily_breakdown = []
