@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import aiohttp
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers.event import async_call_later
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -171,7 +172,6 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
         self.entry = entry
         self._leg2_history: dict = {}
         self._leg2_history_last_fetch: datetime | None = None
-        self._hsp_task_started: bool = False
 
     async def _fetch_southbound(self) -> list[dict]:
         url = HUXLEY_URL.format(rows=HUXLEY_ROWS, token=DARWIN_TOKEN)
@@ -326,16 +326,30 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
         )
         return result
 
+    def schedule_hsp_fetch(self) -> None:
+        """Schedule the first HSP fetch 30 seconds after startup."""
+        async_call_later(self.hass, 30, self._async_hsp_fetch_callback)
+
+    async def _async_hsp_fetch_callback(self, _now=None) -> None:
+        """Callback to fetch HSP data and update coordinator."""
+        _LOGGER.warning("HSP scheduled fetch starting")
+        try:
+            result = await self._fetch_leg2_history()
+            if result and result.get("on_time_pct_7day") is not None:
+                self._leg2_history = result
+                if self.data:
+                    self.data["leg2_historical_reliability"] = result
+                    self.async_set_updated_data(self.data)
+                _LOGGER.warning(
+                    "HSP scheduled fetch complete: 7-day %.1f%%",
+                    result["on_time_pct_7day"]
+                )
+        except Exception as err:
+            _LOGGER.warning("HSP scheduled fetch error: %s", err)
+
     async def _async_update_data(self) -> dict:
         self.update_interval = _get_scan_interval()
         try:
-            # Start HSP background task once after first successful southbound fetch
-            if not self._hsp_task_started:
-                self._hsp_task_started = True
-                self.hass.loop.call_soon_threadsafe(
-                    self.hass.async_create_task,
-                    self._bg_fetch_leg2_history()
-                )
             southbound = await self._fetch_southbound()
             leg2_history = self._leg2_history  # populated by background task
 
