@@ -1,6 +1,7 @@
-"""Coordinator for Morning Commute Multileg - Huxley2 for live leg2, HSP for leg2 history."""
+"""Coordinator for Morning Commute Multileg."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from datetime import datetime, timedelta
@@ -32,50 +33,46 @@ HUXLEY_URL = (
 )
 HUXLEY_ROWS = 50
 
-# HSP — Historic Service Performance API
 HSP_URL      = "https://hsp-prod.rockshore.net/api/v1/serviceMetrics"
 HSP_USERNAME = "YOUR_NRE_USERNAME"
 HSP_PASSWORD = "YOUR_NRE_PASSWORD"
-# CTK → primary southbound termini (CRS codes)
 HSP_FROM     = "CTK"
-HSP_TO_LOCS  = ["EPH"]  # Elephant & Castle — confirmed 32 services, southbound from CTK
-HSP_OPERATOR = "TL"   # Thameslink
-# Fetch HSP once per hour (it's historical, no need to poll constantly)
-HSP_REFRESH_INTERVAL = timedelta(hours=1)
+HSP_TO_LOC   = "EPH"  # Elephant & Castle — confirmed working
+HSP_REFRESH  = timedelta(hours=1)
 
 
 def _get_scan_interval() -> timedelta:
-    hour = datetime.now().hour
-    if 6 <= hour < 10 or 16 <= hour < 20:
+    h = datetime.now().hour
+    if 6 <= h < 10 or 16 <= h < 20:
         return timedelta(seconds=SCAN_INTERVAL_PEAK)
-    if 23 <= hour or hour < 5:
+    if 23 <= h or h < 5:
         return timedelta(seconds=SCAN_INTERVAL_NIGHT)
     return timedelta(seconds=SCAN_INTERVAL_OFFPEAK)
 
 
-def _attr(hass: HomeAssistant, entity_id: str, attr: str):
-    state = hass.states.get(entity_id)
-    return state.attributes.get(attr) if state else None
+def _attr(hass, eid, attr):
+    s = hass.states.get(eid)
+    return s.attributes.get(attr) if s else None
 
 
-def _state(hass: HomeAssistant, entity_id: str) -> str | None:
-    state = hass.states.get(entity_id)
-    return state.state if state else None
+def _state(hass, eid):
+    s = hass.states.get(eid)
+    return s.state if s else None
 
 
-def _svc_dest(svc: dict) -> str:
+def _svc_dest(svc):
     dest = svc.get("destination") or []
     if isinstance(dest, list) and dest:
         return dest[0].get("locationName", "")
     return str(dest)
 
 
-def _is_southbound(svc: dict) -> bool:
+def _is_southbound(svc):
     dest = _svc_dest(svc).lower()
     return any(kw in dest for kw in SOUTHBOUND_TERMINI)
 
 
-def _svc_time(svc: dict) -> datetime | None:
+def _svc_time(svc):
     now = datetime.now().astimezone()
     for key in ("etd", "std"):
         val = (svc.get(key) or "").strip()
@@ -102,18 +99,18 @@ def _svc_time(svc: dict) -> datetime | None:
     return None
 
 
-def _parse_hhmm(hhmm: str, ref: datetime) -> datetime | None:
+def _parse_hhmm(hhmm, ref):
     try:
         h, m = map(int, hhmm.split(":"))
         dt = ref.replace(hour=h, minute=m, second=0, microsecond=0)
         if (ref - dt).total_seconds() > 6 * 3600:
             dt += timedelta(days=1)
         return dt
-    except (ValueError, TypeError, AttributeError):
+    except Exception:
         return None
 
 
-def _build_leg2(southbound: list[dict], scheduled_arrival_str: str | None) -> dict:
+def _build_leg2(southbound, scheduled_arrival_str):
     result = {
         "leg2_station": LEG2_STATION,
         "leg2_walk_mins": LEG2_WALK_MINS,
@@ -139,7 +136,7 @@ def _build_leg2(southbound: list[dict], scheduled_arrival_str: str | None) -> di
         result["leg2_next_southbound_departure"] = first_dt.strftime("%H:%M")
         result["leg2_next_southbound_destination"] = first_dest
         result["leg2_southbound_departures"] = [
-            f"{dt.strftime('%H:%M')} → {dest}" for dt, dest, _ in upcoming[:5]
+            f"{dt.strftime('%H:%M')} \u2192 {dest}" for dt, dest, _ in upcoming[:5]
         ]
 
     if not scheduled_arrival_str:
@@ -153,14 +150,14 @@ def _build_leg2(southbound: list[dict], scheduled_arrival_str: str | None) -> di
     for dep_dt, dest, _ in upcoming:
         if dep_dt >= earliest_board:
             wait = max(0, round((dep_dt - arr_dt).total_seconds() / 60) - LEG2_WALK_MINS)
-            result["leg2_earliest_after_arrival"] = f"{dep_dt.strftime('%H:%M')} → {dest}"
+            result["leg2_earliest_after_arrival"] = f"{dep_dt.strftime('%H:%M')} \u2192 {dest}"
             result["leg2_earliest_destination"] = dest
             result["leg2_connection_mins"] = wait
             return result
 
     _LOGGER.warning(
-        "No southbound CTK service found for Farringdon arrival %s (board %s) — "
-        "Huxley returned %d southbound services",
+        "No southbound CTK service found for Farringdon arrival %s (board %s) "
+        "\u2014 Huxley returned %d southbound services",
         scheduled_arrival_str,
         earliest_board.strftime("%H:%M"),
         len(upcoming),
@@ -169,12 +166,9 @@ def _build_leg2(southbound: list[dict], scheduled_arrival_str: str | None) -> di
 
 
 class MorningCommuteCoordinator(DataUpdateCoordinator):
-    """Reads leg 1 from my_rail_commute; leg 2 live from Huxley2; leg 2 history from HSP."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
-        super().__init__(
-            hass, _LOGGER, name=DOMAIN, update_interval=_get_scan_interval()
-        )
+        super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=_get_scan_interval())
         self.entry = entry
         self._leg2_history: dict = {}
         self._leg2_history_last_fetch: datetime | None = None
@@ -197,16 +191,10 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
             return []
 
     async def _fetch_leg2_history(self) -> dict:
-        """Fetch HSP reliability for CTK southbound routes, last 30 days.
-        
-        Returns dict with daily_breakdown, on_time_pct_today, on_time_pct_7day,
-        on_time_pct_30day, avg_delay_7day, best_day, worst_day — same schema as leg 1.
-        """
         now = datetime.now()
-        # Only fetch once per hour
         if (
             self._leg2_history_last_fetch is not None
-            and (now - self._leg2_history_last_fetch) < HSP_REFRESH_INTERVAL
+            and (now - self._leg2_history_last_fetch) < HSP_REFRESH
             and self._leg2_history
         ):
             return self._leg2_history
@@ -222,85 +210,77 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
             "Authorization": f"Basic {auth}",
             "Content-Type": "application/json",
         }
+        payload = {
+            "from_loc": HSP_FROM,
+            "to_loc": HSP_TO_LOC,
+            "from_time": "0600",
+            "to_time": "1000",
+            "from_date": from_date,
+            "to_date": to_date,
+            "days": "WEEKDAY",
+            "tolerance": [0, 5, 10, 15, 30],
+        }
 
-        # Aggregate results across multiple southbound termini
-        all_services: list[dict] = []
+        all_services = []
         try:
             connector = aiohttp.TCPConnector(ssl=False)
             async with aiohttp.ClientSession(connector=connector) as session:
-                for to_loc in HSP_TO_LOCS:
-                    payload = {
-                        "from_loc": HSP_FROM,
-                        "to_loc": to_loc,
-                        "from_time": "0600",
-                        "to_time": "1000",
-                        "from_date": from_date,
-                        "to_date": to_date,
-                        "days": "WEEKDAY",
-                        "tolerance": [3, 5, 10, 15, 30],
-                    }
-                    if HSP_OPERATOR:
-                        payload["toc_filter"] = [HSP_OPERATOR]
-                    try:
-                        async with session.post(
-                            HSP_URL,
-                            json=payload,
-                            headers=headers,
-                            timeout=aiohttp.ClientTimeout(total=45),
-                        ) as resp:
-                            if resp.status == 200:
-                                data = await resp.json(content_type=None)
-                                services = data.get("Services", [])
-                                all_services.extend(services)
-                                _LOGGER.debug(
-                                    "HSP CTK→%s: %d services", to_loc, len(services)
-                                )
-                            else:
-                                body = await resp.text()
-                                _LOGGER.warning(
-                                    "HSP HTTP %s for CTK→%s: %s",
-                                    resp.status, to_loc, body[:200]
-                                )
-                    except Exception as err:
-                        _LOGGER.warning("HSP fetch error CTK→%s: %s (%s)", to_loc, type(err).__name__, err)
+                async with session.post(
+                    HSP_URL,
+                    json=payload,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=45),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json(content_type=None)
+                        all_services = data.get("Services", [])
+                        _LOGGER.warning(
+                            "HSP CTK->%s: HTTP 200, %d services",
+                            HSP_TO_LOC, len(all_services)
+                        )
+                    else:
+                        body = await resp.text()
+                        _LOGGER.warning("HSP HTTP %s: %s", resp.status, body[:200])
         except Exception as err:
-            _LOGGER.warning("HSP session error: %s", err)
+            _LOGGER.warning("HSP fetch error: %s (%s)", type(err).__name__, err)
+            return self._leg2_history
 
         if not all_services:
-            return self._leg2_history  # return cached if available
+            return self._leg2_history
 
-        # Aggregate by date
-        # HSP structure: Services[].{serviceAttributesMetrics: {date: str, ...}, Metrics: [{tolerance_value, percent_tolerance}]}
-        by_date: dict[str, dict] = {}
+        # Parse HSP response
+        # Structure: Services[].{serviceAttributesMetrics: {rids:[...], ...}, Metrics: [{tolerance_value, percent_tolerance}]}
+        by_date: dict = {}
         for svc in all_services:
             if not isinstance(svc, dict):
                 continue
-            # serviceAttributesMetrics is a DICT (not list) with date, origin, destination etc.
-            loc_data = svc.get("serviceAttributesMetrics", {})
-            if isinstance(loc_data, list) and loc_data:
-                loc_data = loc_data[0]  # handle both formats
-            if not isinstance(loc_data, dict):
+            sam = svc.get("serviceAttributesMetrics", {})
+            if not isinstance(sam, dict):
                 continue
-            date_str = loc_data.get("date", "")
-            if not date_str:
+            rids = sam.get("rids", [])
+            if not rids:
                 continue
-            if date_str not in by_date:
-                by_date[date_str] = {"pct_sum": 0.0, "pct_count": 0}
-            # Metrics is top-level in the service object
             metrics = svc.get("Metrics", [])
-            if not isinstance(metrics, list):
-                continue
-            for m in metrics:
-                if not isinstance(m, dict):
-                    continue
-                if m.get("tolerance_value") == 5:
-                    pct = m.get("percent_tolerance")
-                    if pct is not None:
-                        by_date[date_str]["pct_sum"] += float(pct)
-                        by_date[date_str]["pct_count"] += 1
+            pct_at_5 = None
+            for m in (metrics if isinstance(metrics, list) else []):
+                if isinstance(m, dict) and str(m.get("tolerance_value", "")) == "5":
+                    pct_at_5 = m.get("percent_tolerance")
                     break
+            if pct_at_5 is None:
+                continue
+            for rid in rids:
+                raw = str(rid)[:8]
+                if raw.isdigit() and len(raw) == 8:
+                    date_str = raw[:4] + "-" + raw[4:6] + "-" + raw[6:8]
+                    if date_str not in by_date:
+                        by_date[date_str] = {"pct_sum": 0.0, "pct_count": 0}
+                    by_date[date_str]["pct_sum"] += float(pct_at_5)
+                    by_date[date_str]["pct_count"] += 1
 
-        # Build daily breakdown
+        if not by_date:
+            _LOGGER.warning("HSP: 0 dates aggregated from %d services", len(all_services))
+            return self._leg2_history
+
         daily_breakdown = []
         for date_str in sorted(by_date.keys())[-30:]:
             d = by_date[date_str]
@@ -312,8 +292,8 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "total_observations": d["pct_count"],
             })
 
-        # Calculate summary stats
         days_with_data = [d for d in daily_breakdown if d["on_time_pct"] is not None]
+        today_str = today.strftime("%Y-%m-%d")
         last_7 = [d for d in days_with_data if d["date"] >= (today - timedelta(days=7)).strftime("%Y-%m-%d")]
         last_30 = days_with_data
 
@@ -321,13 +301,7 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
             vals = [d["on_time_pct"] for d in days if d["on_time_pct"] is not None]
             return round(sum(vals) / len(vals), 1) if vals else None
 
-        def avg_delay(days):
-            vals = [d["avg_delay_minutes"] for d in days if d["avg_delay_minutes"] is not None]
-            return round(sum(vals) / len(vals), 1) if vals else None
-
-        today_str = today.strftime("%Y-%m-%d")
         today_data = next((d for d in daily_breakdown if d["date"] == today_str), None)
-
         best = max(days_with_data, key=lambda d: d["on_time_pct"] or 0) if days_with_data else None
         worst = min(days_with_data, key=lambda d: d["on_time_pct"] if d["on_time_pct"] is not None else 100) if days_with_data else None
 
@@ -336,31 +310,38 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
             "on_time_pct_today": today_data["on_time_pct"] if today_data else None,
             "on_time_pct_7day": avg_pct(last_7),
             "on_time_pct_30day": avg_pct(last_30),
-            "avg_delay_7day": avg_delay(last_7),
+            "avg_delay_7day": None,
             "daily_breakdown": daily_breakdown,
             "best_day": best,
             "worst_day": worst,
-            "days_with_data_7day": len(last_7),
-            "days_with_data_30day": len(last_30),
         }
 
         self._leg2_history = result
         self._leg2_history_last_fetch = now
-        _LOGGER.info(
-            "HSP leg2: 7-day on-time %.1f%%, 30-day %.1f%%",
+        _LOGGER.warning(
+            "HSP leg2: 7-day %.1f%%, 30-day %.1f%%, %d days",
             result["on_time_pct_7day"] or 0,
             result["on_time_pct_30day"] or 0,
+            len(daily_breakdown),
         )
         return result
 
     async def _async_update_data(self) -> dict:
         self.update_interval = _get_scan_interval()
-
         try:
             southbound = await self._fetch_southbound()
-            leg2_history = await self._fetch_leg2_history()
-            data = {}
+            try:
+                leg2_history = await asyncio.wait_for(
+                    self._fetch_leg2_history(), timeout=50.0
+                )
+            except asyncio.TimeoutError:
+                _LOGGER.warning("HSP fetch timed out, using cached data")
+                leg2_history = self._leg2_history
+            except Exception as err:
+                _LOGGER.warning("HSP fetch error in update: %s", err)
+                leg2_history = self._leg2_history
 
+            data = {}
             s_id   = f"sensor.{LEG1_PREFIX}_summary"
             st_id  = f"sensor.{LEG1_PREFIX}_status"
             nt_id  = f"sensor.{LEG1_PREFIX}_next_train"
@@ -392,12 +373,6 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "avg_delay_7day": _attr(self.hass, s_id, "avg_delay_7day"),
                 "worst_day": _attr(self.hass, s_id, "worst_day"),
                 "best_day": _attr(self.hass, s_id, "best_day"),
-                "reverse_on_time_pct_today": _attr(self.hass, s_id, "reverse_on_time_pct_today"),
-                "reverse_on_time_pct_7day": _attr(self.hass, s_id, "reverse_on_time_pct_7day"),
-                "reverse_on_time_pct_30day": _attr(self.hass, s_id, "reverse_on_time_pct_30day"),
-                "reverse_avg_delay_7day": _attr(self.hass, s_id, "reverse_avg_delay_7day"),
-                "reverse_worst_day": _attr(self.hass, s_id, "reverse_worst_day"),
-                "reverse_best_day": _attr(self.hass, s_id, "reverse_best_day"),
             }
             data["summary"].update(_build_leg2(southbound, next_arr))
 
@@ -409,11 +384,6 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "major_delays_count": _attr(self.hass, st_id, "major_delays_count"),
                 "cancelled_count": _attr(self.hass, st_id, "cancelled_count"),
                 "max_delay_minutes": _attr(self.hass, st_id, "max_delay_minutes"),
-                "disruption_threshold_met": _attr(self.hass, st_id, "disruption_threshold_met"),
-                "origin": _attr(self.hass, st_id, "origin"),
-                "origin_name": _attr(self.hass, st_id, "origin_name"),
-                "destination": _attr(self.hass, st_id, "destination"),
-                "destination_name": _attr(self.hass, st_id, "destination_name"),
                 "last_updated": _attr(self.hass, st_id, "last_updated"),
             }
             data["status"].update(_build_leg2(southbound, next_arr))
@@ -424,13 +394,11 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 entry = {
                     "state": _state(self.hass, t_id),
                     "train_number": i,
-                    "total_trains": _attr(self.hass, t_id, "total_trains"),
                     "departure_time": _attr(self.hass, t_id, "departure_time"),
                     "scheduled_departure": _attr(self.hass, t_id, "scheduled_departure"),
                     "expected_departure": _attr(self.hass, t_id, "expected_departure"),
                     "platform": _attr(self.hass, t_id, "platform"),
                     "platform_changed": _attr(self.hass, t_id, "platform_changed"),
-                    "previous_platform": _attr(self.hass, t_id, "previous_platform"),
                     "operator": _attr(self.hass, t_id, "operator"),
                     "service_id": _attr(self.hass, t_id, "service_id"),
                     "status": _attr(self.hass, t_id, "status"),
@@ -453,13 +421,9 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "on_time_pct_today": _attr(self.hass, hr_id, "on_time_pct_today"),
                 "on_time_pct_7day": _attr(self.hass, hr_id, "on_time_pct_7day"),
                 "on_time_pct_30day": _attr(self.hass, hr_id, "on_time_pct_30day"),
-                "on_time_count_today": _attr(self.hass, hr_id, "on_time_count_today"),
-                "delayed_count_today": _attr(self.hass, hr_id, "delayed_count_today"),
-                "cancelled_count_today": _attr(self.hass, hr_id, "cancelled_count_today"),
-                "total_observations_today": _attr(self.hass, hr_id, "total_observations_today"),
+                "daily_breakdown": _attr(self.hass, hr_id, "daily_breakdown"),
                 "days_with_data_7day": _attr(self.hass, hr_id, "days_with_data_7day"),
                 "days_with_data_30day": _attr(self.hass, hr_id, "days_with_data_30day"),
-                "daily_breakdown": _attr(self.hass, hr_id, "daily_breakdown"),
             }
 
             data["historical_delays"] = {
@@ -468,7 +432,6 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "avg_delay_7day": _attr(self.hass, hd_id, "avg_delay_7day"),
                 "worst_day": _attr(self.hass, hd_id, "worst_day"),
                 "best_day": _attr(self.hass, hd_id, "best_day"),
-                "days_with_data_7day": _attr(self.hass, hd_id, "days_with_data_7day"),
             }
 
             data["has_disruption"] = {
@@ -481,9 +444,7 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "last_checked": _attr(self.hass, dis_id, "last_checked"),
             }
 
-            # Leg 2 historical reliability from HSP
             data["leg2_historical_reliability"] = leg2_history
-
             return data
 
         except Exception as err:
