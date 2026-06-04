@@ -221,28 +221,27 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
             "tolerance": [0, 5, 10, 15, 30],
         }
 
-        all_services = []
+        # Run synchronous HTTP call in executor to avoid blocking the event loop
+        def _sync_hsp_fetch():
+            import requests  # noqa: PLC0415
+            import json as _json
+            resp = requests.post(
+                HSP_URL,
+                json=payload,
+                headers=headers,
+                timeout=30,
+                verify=False,
+            )
+            if resp.status_code == 200:
+                return resp.json().get("Services", [])
+            _LOGGER.warning("HSP HTTP %s: %s", resp.status_code, resp.text[:200])
+            return []
+
         try:
-            connector = aiohttp.TCPConnector(ssl=False)
-            async with aiohttp.ClientSession(connector=connector) as session:
-                async with session.post(
-                    HSP_URL,
-                    json=payload,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=45),
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json(content_type=None)
-                        all_services = data.get("Services", [])
-                        _LOGGER.warning(
-                            "HSP CTK->%s: HTTP 200, %d services",
-                            HSP_TO_LOC, len(all_services)
-                        )
-                    else:
-                        body = await resp.text()
-                        _LOGGER.warning("HSP HTTP %s: %s", resp.status, body[:200])
+            all_services = await self.hass.async_add_executor_job(_sync_hsp_fetch)
+            _LOGGER.warning("HSP CTK->%s: %d services", HSP_TO_LOC, len(all_services))
         except Exception as err:
-            _LOGGER.warning("HSP fetch error: %s (%s)", type(err).__name__, err)
+            _LOGGER.warning("HSP executor error: %s (%s)", type(err).__name__, err)
             return self._leg2_history
 
         if not all_services:
