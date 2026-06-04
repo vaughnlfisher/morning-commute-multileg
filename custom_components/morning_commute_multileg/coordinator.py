@@ -171,6 +171,7 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
         self.entry = entry
         self._leg2_history: dict = {}
         self._leg2_history_last_fetch: datetime | None = None
+        self._hsp_task_started: bool = False
 
     async def _fetch_southbound(self) -> list[dict]:
         url = HUXLEY_URL.format(rows=HUXLEY_ROWS, token=DARWIN_TOKEN)
@@ -328,8 +329,15 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict:
         self.update_interval = _get_scan_interval()
         try:
+            # Start HSP background task once after first successful southbound fetch
+            if not self._hsp_task_started:
+                self._hsp_task_started = True
+                self.hass.loop.call_soon_threadsafe(
+                    self.hass.async_create_task,
+                    self._bg_fetch_leg2_history()
+                )
             southbound = await self._fetch_southbound()
-            leg2_history = await self._fetch_leg2_history()
+            leg2_history = self._leg2_history  # populated by background task
 
             data = {}
             s_id   = f"sensor.{LEG1_PREFIX}_summary"
