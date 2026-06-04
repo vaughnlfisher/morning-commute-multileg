@@ -20,8 +20,9 @@ SENSOR_DEFS: list[tuple[str, str, str | None, str]] = [
     ("summary",               "Summary",               None,    "mdi:train"),
     ("status",                "Status",                None,    "mdi:train"),
     ("next_train",            "Next Train",            None,    "mdi:train-car"),
-    ("historical_reliability","Historical Reliability", "%",    "mdi:percent"),
-    ("historical_delays",     "Historical Delays",     "min",   "mdi:clock-alert"),
+    ("historical_reliability",     "Historical Reliability",      "%",    "mdi:percent"),
+    ("historical_delays",          "Historical Delays",           "min",   "mdi:clock-alert"),
+    ("leg2_historical_reliability","Leg 2 Historical Reliability", "%",    "mdi:train-car-passenger"),
 ] + [
     (f"train_{i}", f"Train {i}", None, "mdi:train")
     for i in range(1, NUM_TRAINS + 1)
