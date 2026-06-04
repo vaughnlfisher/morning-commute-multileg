@@ -1,6 +1,7 @@
 """Morning Commute Multileg integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -27,31 +28,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_update_options))
 
-    # Schedule HSP leg2 history fetch independently — runs hourly
-    # First fetch is delayed 30 seconds to let HA fully settle after startup
-    async def _fetch_hsp_now(_now=None) -> None:
-        """Fetch HSP leg2 history and store in coordinator."""
+    async def _fetch_hsp(_now=None) -> None:
+        """Fetch HSP leg2 history and push update."""
         try:
             result = await coordinator._fetch_leg2_history()
-            if result:
+            if result and result.get("on_time_pct_7day") is not None:
                 _LOGGER.warning(
-                    "HSP leg2 scheduled fetch: 7-day %.1f%%, 30-day %.1f%%",
-                    result.get("on_time_pct_7day") or 0,
+                    "HSP leg2: 7-day %.1f%%, 30-day %.1f%%",
+                    result["on_time_pct_7day"],
                     result.get("on_time_pct_30day") or 0,
                 )
                 coordinator._leg2_history = result
-                coordinator.async_set_updated_data(coordinator.data)
+                if coordinator.data:
+                    coordinator.data["leg2_historical_reliability"] = result
+                    coordinator.async_set_updated_data(coordinator.data)
         except Exception as err:
-            _LOGGER.warning("HSP scheduled fetch error: %s", err)
+            _LOGGER.warning("HSP fetch error: %s", err)
 
-    # Fire once after 30s, then every hour
-    async def _delayed_first_fetch(event=None) -> None:
-        await _fetch_hsp_now()
+    # First fetch 30 seconds after setup completes
+    async def _delayed_hsp():
+        await asyncio.sleep(30)
+        await _fetch_hsp()
 
-    hass.loop.call_later(30, hass.async_create_task, _delayed_first_fetch())
+    hass.async_create_task(_delayed_hsp())
 
-    cancel_interval = async_track_time_interval(hass, _fetch_hsp_now, HSP_INTERVAL)
-    entry.async_on_unload(cancel_interval)
+    # Then repeat every hour
+    cancel = async_track_time_interval(hass, _fetch_hsp, HSP_INTERVAL)
+    entry.async_on_unload(cancel)
 
     return True
 
