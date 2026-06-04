@@ -1,7 +1,6 @@
 """Coordinator for Morning Commute Multileg."""
 from __future__ import annotations
 
-import asyncio
 import base64
 import logging
 from datetime import datetime, timedelta
@@ -34,7 +33,7 @@ HUXLEY_URL = (
 HUXLEY_ROWS = 50
 
 HSP_URL      = "https://hsp-prod.rockshore.net/api/v1/serviceMetrics"
-HSP_USERNAME = "YOUR_NRE_USERNAME"
+HSP_USERNAME = "PLACEHOLDER_USERNAME"
 HSP_PASSWORD = "YOUR_NRE_PASSWORD"
 HSP_FROM     = "CTK"
 HSP_TO_LOC   = "EPH"  # Elephant & Castle — confirmed working
@@ -330,16 +329,7 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
         self.update_interval = _get_scan_interval()
         try:
             southbound = await self._fetch_southbound()
-            try:
-                leg2_history = await asyncio.wait_for(
-                    self._fetch_leg2_history(), timeout=50.0
-                )
-            except asyncio.TimeoutError:
-                _LOGGER.warning("HSP fetch timed out, using cached data")
-                leg2_history = self._leg2_history
-            except Exception as err:
-                _LOGGER.warning("HSP fetch error in update: %s", err)
-                leg2_history = self._leg2_history
+            leg2_history = await self._fetch_leg2_history()
 
             data = {}
             s_id   = f"sensor.{LEG1_PREFIX}_summary"
