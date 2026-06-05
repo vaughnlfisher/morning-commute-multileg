@@ -327,11 +327,16 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
 
     def schedule_hsp_fetch(self) -> None:
         """Schedule the first HSP fetch 30 seconds after startup."""
-        async_call_later(self.hass, 30, self._async_hsp_fetch_callback)
+        async_call_later(self.hass, 30, self._hsp_fetch_callback)
 
-    async def _async_hsp_fetch_callback(self, _now=None) -> None:
-        """Callback to fetch HSP data and update coordinator."""
-        _LOGGER.warning("HSP scheduled fetch starting")
+    def _hsp_fetch_callback(self, _now) -> None:
+        """Called by async_call_later — schedules the async HSP coroutine."""
+        _LOGGER.warning("HSP: callback fired, scheduling coroutine")
+        self.hass.async_create_task(self._async_hsp_fetch())
+
+    async def _async_hsp_fetch(self) -> None:
+        """Async coroutine to fetch HSP data and update coordinator."""
+        _LOGGER.warning("HSP: async fetch starting")
         try:
             result = await self._fetch_leg2_history()
             if result and result.get("on_time_pct_7day") is not None:
@@ -340,11 +345,11 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                     self.data["leg2_historical_reliability"] = result
                     self.async_set_updated_data(self.data)
                 _LOGGER.warning(
-                    "HSP scheduled fetch complete: 7-day %.1f%%",
+                    "HSP fetch complete: 7-day %.1f%%",
                     result["on_time_pct_7day"]
                 )
         except Exception as err:
-            _LOGGER.warning("HSP scheduled fetch error: %s", err)
+            _LOGGER.warning("HSP fetch error: %s (%s)", type(err).__name__, err)
 
     async def _async_update_data(self) -> dict:
         self.update_interval = _get_scan_interval()
