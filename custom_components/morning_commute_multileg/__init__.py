@@ -1,6 +1,7 @@
 """Morning Commute Multileg integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -24,8 +25,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_update_options))
 
-    # Schedule HSP leg2 history fetch 30s after startup (non-blocking)
-    coordinator.schedule_hsp_fetch()
+    # Schedule HSP background fetch using entry-managed background task
+    # This is automatically cancelled on unload and doesn't block startup
+    async def _hsp_background():
+        await asyncio.sleep(30)
+        _LOGGER.warning("HSP: background fetch starting (30s after startup)")
+        await coordinator._async_hsp_fetch()
+
+    entry.async_create_background_task(
+        hass, _hsp_background(), "morning_commute_hsp_fetch"
+    )
 
     return True
 
