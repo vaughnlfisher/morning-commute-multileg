@@ -331,10 +331,8 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
         )
 
     async def _async_hsp_fetch(self) -> None:
-        """Background task: fetch HSP data after 30s delay."""
-        import asyncio as _aio
-        await _aio.sleep(30)
-        _LOGGER.warning("HSP: background task starting after 30s delay")
+        """Background task: fetch HSP data (delay handled by caller)."""
+        _LOGGER.warning("HSP: _async_hsp_fetch starting")
         try:
             result = await self._fetch_leg2_history()
             if result and result.get("on_time_pct_7day") is not None:
@@ -354,6 +352,7 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
         try:
             southbound = await self._fetch_southbound()
             leg2_history = self._leg2_history  # populated by background task
+            _LOGGER.debug("leg2_history in update: %s keys", list(leg2_history.keys()) if leg2_history else "empty")
 
             data = {}
             s_id   = f"sensor.{LEG1_PREFIX}_summary"
@@ -458,7 +457,7 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "last_checked": _attr(self.hass, dis_id, "last_checked"),
             }
 
-            data["leg2_historical_reliability"] = leg2_history
+            data["leg2_historical_reliability"] = leg2_history if leg2_history else {}
             return data
 
         except Exception as err:
