@@ -33,7 +33,7 @@ HUXLEY_URL = (
 HUXLEY_ROWS = 50
 
 HSP_URL      = "https://hsp-prod.rockshore.net/api/v1/serviceMetrics"
-HSP_USERNAME = "PLACEHOLDER_USERNAME"
+HSP_USERNAME = "YOUR_NRE_USERNAME"
 HSP_PASSWORD = "YOUR_NRE_PASSWORD"
 HSP_FROM     = "CTK"
 HSP_TO_LOC   = "EPH"  # Elephant & Castle — confirmed working
