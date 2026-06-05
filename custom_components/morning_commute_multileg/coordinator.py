@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 import aiohttp
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.event import async_call_later
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -326,17 +325,18 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
         return result
 
     def schedule_hsp_fetch(self) -> None:
-        """Schedule the first HSP fetch 30 seconds after startup."""
-        async_call_later(self.hass, 30, self._hsp_fetch_callback)
-
-    def _hsp_fetch_callback(self, _now) -> None:
-        """Called by async_call_later — schedules the async HSP coroutine."""
-        _LOGGER.warning("HSP: callback fired, scheduling coroutine")
-        self.hass.async_create_task(self._async_hsp_fetch())
+        """Schedule HSP fetch as a proper background task."""
+        _LOGGER.warning("HSP: scheduling background task")
+        self.hass.async_create_background_task(
+            self._async_hsp_fetch(),
+            name="morning_commute_multileg_hsp_fetch",
+        )
 
     async def _async_hsp_fetch(self) -> None:
-        """Async coroutine to fetch HSP data and update coordinator."""
-        _LOGGER.warning("HSP: async fetch starting")
+        """Background task: fetch HSP data after 30s delay."""
+        import asyncio as _aio
+        await _aio.sleep(30)
+        _LOGGER.warning("HSP: background task starting after 30s delay")
         try:
             result = await self._fetch_leg2_history()
             if result and result.get("on_time_pct_7day") is not None:
