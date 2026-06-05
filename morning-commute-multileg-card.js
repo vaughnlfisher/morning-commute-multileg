@@ -1,7 +1,7 @@
-// Morning Commute Multileg Card v1.4.4
+// Morning Commute Multileg Card v1.5.0
 // Collapsible history: LEG 1 (Elizabeth line) + LEG 2 (Thameslink CTK->EPH)
 
-const VER = '1.4.4';
+const VER = '1.5.0';
 const SC = {
   on_time:    {color:'#4caf50', icon:'\u2713', label:'On time'},
   delayed:    {color:'#f44336', icon:'\u26a0', label:'Delayed'},
@@ -140,6 +140,7 @@ class MorningCommuteMultilegCard extends HTMLElement {
       .leg-pill{border-radius:10px;padding:1px 7px;font-size:9px;font-weight:800;color:#fff}
       .p1{background:#0098D4} .p2{background:#003688}
       .train-row{padding:${rp}}
+      .leg2-row{padding-left:28px;border-left:3px solid #003688;margin-left:13px}
       .train-row:hover{background:var(--secondary-background-color,rgba(0,0,0,.03))}
       .t-top{display:flex;align-items:baseline;justify-content:space-between;gap:6px;margin-bottom:3px}
       .t-time{font-size:1.25em;font-weight:700;color:var(--primary-text-color);letter-spacing:-.3px;flex-shrink:0}
@@ -194,14 +195,22 @@ class MorningCommuteMultilegCard extends HTMLElement {
     return `<div class="train-row"><div class="t-top"><span class="t-time">${dep}</span><div class="t-meta">${platHtml}${jHtml}</div><span class="t-status" style="color:${status.color}">${status.icon} ${delay>0?`+${delay}m`:status.label}</span></div>${opHtml}${callHtml}${delayHtml}${cancelHtml}</div>`;
   }
 
-  _leg2Row(train) {
+  _leg2Rows(train) {
     const walkMins=train.leg2_walk_mins||5;
     if (train.is_cancelled) return `<div class="train-row"><div class="t-top"><span class="t-time" style="color:#9e9e9e">--:--</span><div class="t-meta"></div><span class="t-status" style="color:#9e9e9e">\u2013 No connection</span></div><div class="t-sub" style="font-style:italic">Train cancelled</div></div>`;
+    let conns=Array.isArray(train.leg2_connections)?train.leg2_connections:[];
+    if (conns.length) {
+      return conns.map(c=>{
+        const waitLbl=(c.wait_mins!==null&&c.wait_mins!==undefined)?`${walkMins}m walk + ${c.wait_mins}m wait`:`${walkMins}m walk`;
+        return `<div class="train-row leg2-row"><div class="t-top"><span class="t-time" style="color:#003688">${c.time}</span><div class="t-meta"><span style="font-size:.79em;color:var(--secondary-text-color)">${waitLbl}</span></div><span class="t-status" style="color:#003688">\u2713 Live</span></div><div class="t-sub">Towards ${c.destination}</div></div>`;
+      }).join('');
+    }
+    // Fallback: single earliest or TfL-derived estimate
     let conn=null;
     const earliest=train.leg2_earliest_after_arrival;
     if (earliest&&earliest!=='None') {
       const isEst=earliest.startsWith('~');
-      const[connTime,...rest]=earliest.replace(/^~/,'').split(' \u2192 ');
+      const[connTime]=earliest.replace(/^~/,'').split(' \u2192 ');
       conn={time:connTime,dest:(train.leg2_earliest_destination||'').replace(' (est.)',''),waitMins:train.leg2_connection_mins,estimated:isEst};
     } else {
       conn=this._computeLeg2(train.scheduled_arrival);
@@ -210,7 +219,7 @@ class MorningCommuteMultilegCard extends HTMLElement {
     const color=conn.estimated?'#ff9800':'#003688';
     const statusLbl=conn.estimated?'~ Estimated':'\u2713 Live';
     const waitLbl=conn.waitMins!==null&&conn.waitMins!==undefined?`${walkMins}m walk + ${conn.waitMins}m wait`:`${walkMins}m walk`;
-    return `<div class="train-row"><div class="t-top"><span class="t-time" style="color:${color}">${conn.time}</span><div class="t-meta"><span style="font-size:.79em;color:var(--secondary-text-color)">${waitLbl}</span></div><span class="t-status" style="color:${color}">${statusLbl}</span></div><div class="t-sub">Towards ${conn.dest}</div></div>`;
+    return `<div class="train-row leg2-row"><div class="t-top"><span class="t-time" style="color:${color}">${conn.time}</span><div class="t-meta"><span style="font-size:.79em;color:var(--secondary-text-color)">${waitLbl}</span></div><span class="t-status" style="color:${color}">${statusLbl}</span></div><div class="t-sub">Towards ${conn.dest}</div></div>`;
   }
 
   _renderHistSection(attrs, delAttrs, label, pillClass) {
@@ -261,7 +270,7 @@ class MorningCommuteMultilegCard extends HTMLElement {
       return true;
     });
     const hdrHtml=cfg.show_header?`<div class="hdr"><span style="font-size:20px">\ud83d\ude86</span><div><div class="hdr-title">${cfg.title}</div>${cfg.show_route?`<div class="hdr-route">${origin} \u2192 ${dest}</div>`:''}</div></div>`:'';
-    const blocksHtml=visible.length?visible.map(t=>`<div class="train-block"><div class="leg-bar l1"><span class="leg-pill p1">LEG 1</span>${origin} \u2192 ${dest} \u00b7 Elizabeth line</div>${this._trainRow(t)}${cfg.show_leg2?`<div class="walk-div"><span class="walk-line"></span>\ud83d\udeb6 ${t.leg2_walk_mins||5} min walk \u00b7 Farringdon \u2192 City Thameslink<span class="walk-line"></span></div><div class="leg-bar"><span class="leg-pill p2">LEG 2</span>City Thameslink \u00b7 Thameslink southbound</div>${this._leg2Row(t)}`:''}</div>`).join(''):'<div class="no-trains">No trains found</div>';
+    const blocksHtml=visible.length?visible.slice(0,3).map(t=>`<div class="train-block"><div class="leg-bar l1"><span class="leg-pill p1">LEG 1</span>${origin} \u2192 ${dest} \u00b7 Elizabeth line</div>${this._trainRow(t)}${cfg.show_leg2?`<div class="walk-div"><span class="walk-line"></span>\ud83d\udeb6 ${t.leg2_walk_mins||5} min walk \u00b7 Farringdon \u2192 City Thameslink<span class="walk-line"></span></div><div class="leg-bar"><span class="leg-pill p2">LEG 2</span>City Thameslink \u00b7 next ${Array.isArray(t.leg2_connections)&&t.leg2_connections.length?t.leg2_connections.length:''} southbound</div>${this._leg2Rows(t)}`:''}</div>`).join(''):'<div class="no-trains">No trains found</div>';
     const histHtml=cfg.show_history_panel?`<div class="hist-toggle" id="hist-toggle"><span class="hist-toggle-lbl">\ud83d\udcca Reliability History</span><span class="hist-toggle-icon${this._histOpen?' open':''}">\u25bc</span></div>${this._histOpen?this._histPanel():''}`:'';
     const footerHtml=cfg.show_last_updated&&lastUpdated?`<div class="footer"><span>Last updated: ${lastUpdated}</span><span>\ud83d\ude49</span></div>`:'';
     this.shadowRoot.innerHTML=`<style>${this._styles()}</style><ha-card>${hdrHtml}${blocksHtml}${histHtml}${footerHtml}</ha-card>`;

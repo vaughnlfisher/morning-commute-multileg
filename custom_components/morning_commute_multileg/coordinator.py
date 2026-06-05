@@ -119,6 +119,7 @@ def _build_leg2(southbound, scheduled_arrival_str):
         "leg2_earliest_after_arrival": None,
         "leg2_earliest_destination": None,
         "leg2_connection_mins": None,
+        "leg2_connections": [],
     }
     if not southbound:
         return result
@@ -129,6 +130,9 @@ def _build_leg2(southbound, scheduled_arrival_str):
         dt = _svc_time(svc)
         if dt and dt >= now:
             upcoming.append((dt, _svc_dest(svc), svc))
+
+    # Sort by departure time (Huxley list is not time-ordered)
+    upcoming.sort(key=lambda x: x[0])
 
     if upcoming:
         first_dt, first_dest, _ = upcoming[0]
@@ -145,14 +149,27 @@ def _build_leg2(southbound, scheduled_arrival_str):
     if not arr_dt:
         return result
 
+    # Build up to 3 catchable connections departing after arrival + walk
     earliest_board = arr_dt + timedelta(minutes=LEG2_WALK_MINS)
+    connections = []
     for dep_dt, dest, _ in upcoming:
         if dep_dt >= earliest_board:
             wait = max(0, round((dep_dt - arr_dt).total_seconds() / 60) - LEG2_WALK_MINS)
-            result["leg2_earliest_after_arrival"] = f"{dep_dt.strftime('%H:%M')} \u2192 {dest}"
-            result["leg2_earliest_destination"] = dest
-            result["leg2_connection_mins"] = wait
-            return result
+            connections.append({
+                "time": dep_dt.strftime("%H:%M"),
+                "destination": dest,
+                "wait_mins": wait,
+            })
+            if len(connections) >= 3:
+                break
+
+    result["leg2_connections"] = connections
+    if connections:
+        first = connections[0]
+        result["leg2_earliest_after_arrival"] = f"{first['time']} \u2192 {first['destination']}"
+        result["leg2_earliest_destination"] = first["destination"]
+        result["leg2_connection_mins"] = first["wait_mins"]
+        return result
 
     _LOGGER.warning(
         "No southbound CTK service found for Farringdon arrival %s (board %s) "
