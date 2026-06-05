@@ -1,7 +1,7 @@
-// Morning Commute Multileg Card v1.5.0
+// Morning Commute Multileg Card v1.5.1
 // Collapsible history: LEG 1 (Elizabeth line) + LEG 2 (Thameslink CTK->EPH)
 
-const VER = '1.5.0';
+const VER = '1.5.1';
 const SC = {
   on_time:    {color:'#4caf50', icon:'\u2713', label:'On time'},
   delayed:    {color:'#f44336', icon:'\u26a0', label:'Delayed'},
@@ -202,7 +202,8 @@ class MorningCommuteMultilegCard extends HTMLElement {
     if (conns.length) {
       return conns.map(c=>{
         const waitLbl=(c.wait_mins!==null&&c.wait_mins!==undefined)?`${walkMins}m walk + ${c.wait_mins}m wait`:`${walkMins}m walk`;
-        return `<div class="train-row leg2-row"><div class="t-top"><span class="t-time" style="color:#003688">${c.time}</span><div class="t-meta"><span style="font-size:.79em;color:var(--secondary-text-color)">${waitLbl}</span></div><span class="t-status" style="color:#003688">\u2713 Live</span></div><div class="t-sub">Towards ${c.destination}</div></div>`;
+        const platHtml=c.platform?`<span class="t-plat">Platform ${c.platform}</span>`:'';
+        return `<div class="train-row leg2-row"><div class="t-top"><span class="t-time" style="color:#003688">${c.time}</span><div class="t-meta">${platHtml}<span style="font-size:.79em;color:var(--secondary-text-color)">${waitLbl}</span></div><span class="t-status" style="color:#003688">\u2713 Live</span></div><div class="t-sub">Towards ${c.destination}</div></div>`;
       }).join('');
     }
     // Fallback: single earliest or TfL-derived estimate

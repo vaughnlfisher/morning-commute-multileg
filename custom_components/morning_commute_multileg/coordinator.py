@@ -152,13 +152,14 @@ def _build_leg2(southbound, scheduled_arrival_str):
     # Build up to 3 catchable connections departing after arrival + walk
     earliest_board = arr_dt + timedelta(minutes=LEG2_WALK_MINS)
     connections = []
-    for dep_dt, dest, _ in upcoming:
+    for dep_dt, dest, svc in upcoming:
         if dep_dt >= earliest_board:
             wait = max(0, round((dep_dt - arr_dt).total_seconds() / 60) - LEG2_WALK_MINS)
             connections.append({
                 "time": dep_dt.strftime("%H:%M"),
                 "destination": dest,
                 "wait_mins": wait,
+                "platform": svc.get("platform"),
             })
             if len(connections) >= 3:
                 break
