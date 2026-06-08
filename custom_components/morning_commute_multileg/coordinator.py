@@ -28,7 +28,7 @@ _LOGGER = logging.getLogger(__name__)
 
 HUXLEY_URL = (
     "https://huxley2.azurewebsites.net/departures/CTK/{rows}"
-    "?timeWindow=120&accessToken={token}"
+    "?timeWindow=120&expand=true&accessToken={token}"
 )
 HUXLEY_ROWS = 50
 
@@ -109,6 +109,45 @@ def _parse_hhmm(hhmm, ref):
         return None
 
 
+def _svc_status(svc):
+    """Return (status_str, delay_minutes) from a Huxley service."""
+    etd = (svc.get("etd") or "").strip()
+    if svc.get("isCancelled") or etd == "Cancelled":
+        return "Cancelled", None
+    if etd in ("On time", ""):
+        return "On time", 0
+    if etd == "Delayed":
+        return "Delayed", None
+    std = (svc.get("std") or "").strip()
+    try:
+        eh, em = map(int, etd.split(":"))
+        sh, sm = map(int, std.split(":"))
+        delay = (eh * 60 + em) - (sh * 60 + sm)
+        if delay < 0:
+            delay += 1440
+        return ("On time" if delay == 0 else "Delayed"), delay
+    except (ValueError, TypeError):
+        return "On time", 0
+
+
+def _transit_to_terminus(svc, dep_dt):
+    """In-transit minutes from departure to the service's final calling point."""
+    scp = svc.get("subsequentCallingPoints")
+    if not scp or not isinstance(scp, list):
+        return None
+    pts = scp[0].get("callingPoint", []) if isinstance(scp[0], dict) else []
+    if not pts:
+        return None
+    last = pts[-1]
+    t = (last.get("et") or "").strip()
+    if t in ("", "On time", "Delayed", "Cancelled"):
+        t = (last.get("st") or "").strip()
+    arr = _parse_hhmm(t, dep_dt)
+    if not arr:
+        return None
+    return max(0, round((arr - dep_dt).total_seconds() / 60))
+
+
 def _build_leg2(southbound, scheduled_arrival_str):
     result = {
         "leg2_station": LEG2_STATION,
@@ -155,11 +194,17 @@ def _build_leg2(southbound, scheduled_arrival_str):
     for dep_dt, dest, svc in upcoming:
         if dep_dt >= earliest_board:
             wait = max(0, round((dep_dt - arr_dt).total_seconds() / 60) - LEG2_WALK_MINS)
+            status, delay = _svc_status(svc)
+            # Leg2 in-transit time: departure -> arrival at this service's terminus
+            leg2_transit = _transit_to_terminus(svc, dep_dt)
             connections.append({
                 "time": dep_dt.strftime("%H:%M"),
                 "destination": dest,
                 "wait_mins": wait,
                 "platform": svc.get("platform"),
+                "status": status,
+                "delay_minutes": delay,
+                "transit_mins": leg2_transit,
             })
             if len(connections) >= 3:
                 break
@@ -443,6 +488,27 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                     "delay_reason": _attr(self.hass, t_id, "delay_reason"),
                 }
                 entry.update(_build_leg2(southbound, t_arr))
+                # Leg 1 in-transit (Twyford -> Farringdon) from scheduled times
+                leg1_transit = None
+                dep_s = entry.get("scheduled_departure")
+                if dep_s and t_arr:
+                    try:
+                        dh, dm = map(int, dep_s.split(":"))
+                        ah, am = map(int, t_arr.split(":"))
+                        leg1_transit = (ah * 60 + am) - (dh * 60 + dm)
+                        if leg1_transit < 0:
+                            leg1_transit += 1440
+                    except (ValueError, TypeError):
+                        leg1_transit = None
+                entry["leg1_transit_mins"] = leg1_transit
+                conns = entry.get("leg2_connections") or []
+                leg2_transit = conns[0].get("transit_mins") if conns else None
+                if leg1_transit is not None and leg2_transit is not None:
+                    entry["total_transit_mins"] = leg1_transit + leg2_transit
+                elif leg1_transit is not None:
+                    entry["total_transit_mins"] = leg1_transit
+                else:
+                    entry["total_transit_mins"] = None
                 data[f"train_{i}"] = entry
 
             data["next_train"] = dict(data["train_1"])

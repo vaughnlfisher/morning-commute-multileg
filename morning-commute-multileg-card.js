@@ -1,7 +1,7 @@
-// Morning Commute Multileg Card v1.5.1
+// Morning Commute Multileg Card v1.6.0
 // Collapsible history: LEG 1 (Elizabeth line) + LEG 2 (Thameslink CTK->EPH)
 
-const VER = '1.5.1';
+const VER = '1.6.0';
 const SC = {
   on_time:    {color:'#4caf50', icon:'\u2713', label:'On time'},
   delayed:    {color:'#f44336', icon:'\u26a0', label:'Delayed'},
@@ -40,6 +40,7 @@ class MorningCommuteMultilegCard extends HTMLElement {
     this._config = {};
     this._hass = null;
     this._histOpen = false;
+    this._collapsed = {};
   }
   static getStubConfig() {
     return {entity:'sensor.morning_commute_summary',title:'Morning Commute',show_platform:true,show_operator:true,show_calling_points:true,show_journey_time:true,show_last_updated:true,show_leg2:true,show_history_panel:true,compact_height:false};
@@ -137,6 +138,11 @@ class MorningCommuteMultilegCard extends HTMLElement {
       .train-block:last-of-type{border-bottom:none}
       .leg-bar{display:flex;align-items:center;gap:6px;padding:3px 16px;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--secondary-text-color);background:var(--secondary-background-color,#f5f5f5)}
       .leg-bar.l1{border-top:1px solid var(--divider-color,rgba(0,0,0,.08))}
+      .leg1-toggle{cursor:pointer;user-select:none}
+      .leg1-toggle:hover{filter:brightness(0.97)}
+      .total-time{margin-left:auto;font-size:1.05em;font-weight:700;color:var(--primary-text-color);text-transform:none;letter-spacing:0}
+      .caret{font-size:11px;transition:transform .2s;margin-left:6px}
+      .caret.open{transform:rotate(180deg)}
       .leg-pill{border-radius:10px;padding:1px 7px;font-size:9px;font-weight:800;color:#fff}
       .p1{background:#0098D4} .p2{background:#003688}
       .train-row{padding:${rp}}
@@ -203,7 +209,16 @@ class MorningCommuteMultilegCard extends HTMLElement {
       return conns.map(c=>{
         const waitLbl=(c.wait_mins!==null&&c.wait_mins!==undefined)?`${walkMins}m walk + ${c.wait_mins}m wait`:`${walkMins}m walk`;
         const platHtml=c.platform?`<span class="t-plat">Platform ${c.platform}</span>`:'';
-        return `<div class="train-row leg2-row"><div class="t-top"><span class="t-time" style="color:#003688">${c.time}</span><div class="t-meta">${platHtml}<span style="font-size:.79em;color:var(--secondary-text-color)">${waitLbl}</span></div><span class="t-status" style="color:#003688">\u2713 Live</span></div><div class="t-sub">Towards ${c.destination}</div></div>`;
+        let scol='#003688', slbl='\u2713 Live';
+        if (c.status) {
+          const st=c.status.toLowerCase();
+          const d=parseInt(c.delay_minutes||0,10);
+          if (st==='cancelled'){scol='#d32f2f';slbl='\u2715 Cancelled';}
+          else if (st==='delayed'||d>=10){scol='#f44336';slbl=d>0?`+${d}m`:'Delayed';}
+          else if (d>=3){scol='#ff9800';slbl=`+${d}m`;}
+          else {scol='#4caf50';slbl='\u2713 On time';}
+        }
+        return `<div class="train-row leg2-row"><div class="t-top"><span class="t-time" style="color:${scol}">${c.time}</span><div class="t-meta">${platHtml}<span style="font-size:.79em;color:var(--secondary-text-color)">${waitLbl}</span></div><span class="t-status" style="color:${scol}">${slbl}</span></div><div class="t-sub">Towards ${c.destination}</div></div>`;
       }).join('');
     }
     // Fallback: single earliest or TfL-derived estimate
@@ -271,12 +286,28 @@ class MorningCommuteMultilegCard extends HTMLElement {
       return true;
     });
     const hdrHtml=cfg.show_header?`<div class="hdr"><span style="font-size:20px">\ud83d\ude86</span><div><div class="hdr-title">${cfg.title}</div>${cfg.show_route?`<div class="hdr-route">${origin} \u2192 ${dest}</div>`:''}</div></div>`:'';
-    const blocksHtml=visible.length?visible.slice(0,3).map(t=>`<div class="train-block"><div class="leg-bar l1"><span class="leg-pill p1">LEG 1</span>${origin} \u2192 ${dest} \u00b7 Elizabeth line</div>${this._trainRow(t)}${cfg.show_leg2?`<div class="walk-div"><span class="walk-line"></span>\ud83d\udeb6 ${t.leg2_walk_mins||5} min walk \u00b7 Farringdon \u2192 City Thameslink<span class="walk-line"></span></div><div class="leg-bar"><span class="leg-pill p2">LEG 2</span>City Thameslink \u00b7 next ${Array.isArray(t.leg2_connections)&&t.leg2_connections.length?t.leg2_connections.length:''} southbound</div>${this._leg2Rows(t)}`:''}</div>`).join(''):'<div class="no-trains">No trains found</div>';
+    const blocksHtml=visible.length?visible.slice(0,3).map((t,idx)=>{
+      const collapsed=!!this._collapsed[idx];
+      const totalTxt=(t.total_transit_mins!==null&&t.total_transit_mins!==undefined)?`<span class="total-time">\u23f1 ${t.total_transit_mins} min total</span>`:'';
+      const caret=`<span class="caret${collapsed?'':' open'}">\u25bc</span>`;
+      const leg1bar=`<div class="leg-bar l1 leg1-toggle" data-idx="${idx}"><span class="leg-pill p1">LEG 1</span>${origin} \u2192 ${dest} \u00b7 Elizabeth line ${totalTxt}${caret}</div>`;
+      const leg1=leg1bar+this._trainRow(t);
+      if (collapsed) return `<div class="train-block">${leg1}</div>`;
+      const leg2=cfg.show_leg2?`<div class="walk-div"><span class="walk-line"></span>\ud83d\udeb6 ${t.leg2_walk_mins||5} min walk \u00b7 Farringdon \u2192 City Thameslink<span class="walk-line"></span></div><div class="leg-bar"><span class="leg-pill p2">LEG 2</span>City Thameslink \u00b7 next ${Array.isArray(t.leg2_connections)&&t.leg2_connections.length?t.leg2_connections.length:''} southbound</div>${this._leg2Rows(t)}`:'';
+      return `<div class="train-block">${leg1}${leg2}</div>`;
+    }).join(''):'<div class="no-trains">No trains found</div>';
     const histHtml=cfg.show_history_panel?`<div class="hist-toggle" id="hist-toggle"><span class="hist-toggle-lbl">\ud83d\udcca Reliability History</span><span class="hist-toggle-icon${this._histOpen?' open':''}">\u25bc</span></div>${this._histOpen?this._histPanel():''}`:'';
     const footerHtml=cfg.show_last_updated&&lastUpdated?`<div class="footer"><span>Last updated: ${lastUpdated}</span><span>\ud83d\ude49</span></div>`:'';
     this.shadowRoot.innerHTML=`<style>${this._styles()}</style><ha-card>${hdrHtml}${blocksHtml}${histHtml}${footerHtml}</ha-card>`;
     const toggleEl=this.shadowRoot.getElementById('hist-toggle');
     if (toggleEl) toggleEl.addEventListener('click',()=>{this._histOpen=!this._histOpen;this._render();});
+    this.shadowRoot.querySelectorAll('.leg1-toggle').forEach(el=>{
+      el.addEventListener('click',()=>{
+        const i=parseInt(el.getAttribute('data-idx'),10);
+        this._collapsed[i]=!this._collapsed[i];
+        this._render();
+      });
+    });
   }
 }
 
