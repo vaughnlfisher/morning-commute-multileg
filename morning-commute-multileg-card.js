@@ -1,7 +1,7 @@
-// Morning Commute Multileg Card v1.6.1
+// Morning Commute Multileg Card v1.6.2
 // Collapsible history: LEG 1 (Elizabeth line) + LEG 2 (Thameslink CTK->EPH)
 
-const VER = '1.6.1';
+const VER = '1.6.2';
 const SC = {
   on_time:    {color:'#4caf50', icon:'\u2713', label:'On time'},
   delayed:    {color:'#f44336', icon:'\u26a0', label:'Delayed'},
@@ -158,18 +158,18 @@ class MorningCommuteMultilegCard extends HTMLElement {
       .t-delay{font-size:.76em;color:#f44336;margin-top:2px;font-style:italic}
       .walk-div{display:flex;align-items:center;gap:8px;padding:5px 16px;font-size:.76em;color:var(--secondary-text-color);background:var(--secondary-background-color,rgba(0,0,0,.03));border-top:1px dashed var(--divider-color,rgba(0,0,0,.15))}
       .walk-line{flex:1;border-top:1px dashed var(--divider-color,rgba(0,0,0,.2))}
-      .hist-toggle{display:flex;align-items:center;justify-content:space-between;padding:8px 16px;cursor:pointer;border-top:1px solid var(--divider-color,rgba(0,0,0,.08));background:var(--secondary-background-color,#f5f5f5);user-select:none}
+      .hist-toggle{display:flex;align-items:center;justify-content:space-between;padding:8px 16px;cursor:pointer;border-top:1px solid rgba(0,0,0,.12);background:#fff;user-select:none}
       .hist-toggle:hover{background:var(--secondary-background-color,rgba(0,0,0,.06))}
-      .hist-toggle-lbl{font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--secondary-text-color)}
-      .hist-toggle-icon{font-size:14px;color:var(--secondary-text-color);transition:transform .2s}
+      .hist-toggle-lbl{font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#444}
+      .hist-toggle-icon{font-size:14px;color:#444;transition:transform .2s}
       .hist-toggle-icon.open{transform:rotate(180deg)}
-      .hist-section{padding:10px 16px 12px;border-top:1px solid var(--divider-color,rgba(0,0,0,.06))}
+      .hist-section{padding:10px 16px 12px;border-top:1px solid rgba(0,0,0,.08);background:#fff}
       .hist-section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--secondary-text-color);margin-bottom:6px}
       .hist-section-title.l1{color:#0098D4} .hist-section-title.l2{color:#003688}
       .hist-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px}
-      .hist-stat{text-align:center;background:rgba(128,128,128,.12);border-radius:6px;padding:6px 4px;border:1px solid rgba(128,128,128,.15)}
+      .hist-stat{text-align:center;background:#f5f5f5;border-radius:6px;padding:6px 4px;border:1px solid #e0e0e0}
       .hist-stat-val{font-size:1.15em;font-weight:700}
-      .hist-stat-lbl{font-size:.7em;color:var(--secondary-text-color);margin-top:1px}
+      .hist-stat-lbl{font-size:.7em;color:#666;margin-top:1px}
       .hist-days{display:flex;gap:3px;margin-bottom:6px}
       .hist-day{flex:1;text-align:center;border-radius:4px;padding:4px 2px;min-width:0}
       .hist-day-lbl{font-size:.65em;font-weight:600;opacity:.9}
