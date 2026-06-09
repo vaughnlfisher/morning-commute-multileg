@@ -1,7 +1,7 @@
-// Morning Commute Multileg Card v1.6.2
+// Morning Commute Multileg Card v1.6.3
 // Collapsible history: LEG 1 (Elizabeth line) + LEG 2 (Thameslink CTK->EPH)
 
-const VER = '1.6.2';
+const VER = '1.6.3';
 const SC = {
   on_time:    {color:'#4caf50', icon:'\u2713', label:'On time'},
   delayed:    {color:'#f44336', icon:'\u26a0', label:'Delayed'},
@@ -163,13 +163,13 @@ class MorningCommuteMultilegCard extends HTMLElement {
       .hist-toggle-lbl{font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#444}
       .hist-toggle-icon{font-size:14px;color:#444;transition:transform .2s}
       .hist-toggle-icon.open{transform:rotate(180deg)}
-      .hist-section{padding:10px 16px 12px;border-top:1px solid rgba(0,0,0,.08);background:#fff}
+      .hist-panel-wrap{background:#fff;color:#222}.hist-section{padding:10px 16px 12px;border-top:1px solid #ddd;background:#fff}
       .hist-section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--secondary-text-color);margin-bottom:6px}
       .hist-section-title.l1{color:#0098D4} .hist-section-title.l2{color:#003688}
       .hist-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px}
       .hist-stat{text-align:center;background:#f5f5f5;border-radius:6px;padding:6px 4px;border:1px solid #e0e0e0}
-      .hist-stat-val{font-size:1.15em;font-weight:700}
-      .hist-stat-lbl{font-size:.7em;color:#666;margin-top:1px}
+      .hist-stat-val{font-size:1.15em;font-weight:700;color:#fff}
+      .hist-stat-lbl{font-size:.7em;color:rgba(255,255,255,.85);margin-top:1px}
       .hist-days{display:flex;gap:3px;margin-bottom:6px}
       .hist-day{flex:1;text-align:center;border-radius:4px;padding:4px 2px;min-width:0}
       .hist-day-lbl{font-size:.65em;font-weight:600;opacity:.9}
@@ -254,10 +254,10 @@ class MorningCommuteMultilegCard extends HTMLElement {
     return `<div class="hist-section">
       <div class="hist-section-title ${pillClass}">${label}</div>
       <div class="hist-stats">
-        <div class="hist-stat"><div class="hist-stat-val" style="color:${pct_color(attrs.on_time_pct_today)}">${fmt(attrs.on_time_pct_today)}</div><div class="hist-stat-lbl">Today</div></div>
-        <div class="hist-stat"><div class="hist-stat-val" style="color:${pct_color(attrs.on_time_pct_7day)}">${fmt(attrs.on_time_pct_7day)}</div><div class="hist-stat-lbl">7-day</div></div>
-        <div class="hist-stat"><div class="hist-stat-val" style="color:${pct_color(attrs.on_time_pct_30day)}">${fmt(attrs.on_time_pct_30day)}</div><div class="hist-stat-lbl">30-day</div></div>
-        <div class="hist-stat"><div class="hist-stat-val">${fmtD(avgDelay)}</div><div class="hist-stat-lbl">Avg delay</div></div>
+        <div class="hist-stat" style="background:${pct_color(attrs.on_time_pct_today)};border-color:${pct_color(attrs.on_time_pct_today)}"><div class="hist-stat-val">${fmt(attrs.on_time_pct_today)}</div><div class="hist-stat-lbl">Today</div></div>
+        <div class="hist-stat" style="background:${pct_color(attrs.on_time_pct_7day)};border-color:${pct_color(attrs.on_time_pct_7day)}"><div class="hist-stat-val">${fmt(attrs.on_time_pct_7day)}</div><div class="hist-stat-lbl">7-day</div></div>
+        <div class="hist-stat" style="background:${pct_color(attrs.on_time_pct_30day)};border-color:${pct_color(attrs.on_time_pct_30day)}"><div class="hist-stat-val">${fmt(attrs.on_time_pct_30day)}</div><div class="hist-stat-lbl">30-day</div></div>
+        <div class="hist-stat" style="background:#607d8b;border-color:#607d8b"><div class="hist-stat-val">${fmtD(avgDelay)}</div><div class="hist-stat-lbl">Avg delay</div></div>
       </div>
       ${daysHtml?`<div class="hist-days">${daysHtml}</div>`:''}
       <div class="hist-bw"><span>${bestStr}</span><span>${worstStr}</span></div>
@@ -268,7 +268,7 @@ class MorningCommuteMultilegCard extends HTMLElement {
     const {rel, del, leg2} = this._histAttrs();
     const leg1Html = this._renderHistSection(rel, del, '\ud83d\ude86 Leg 1 \u00b7 Twyford \u2192 Farringdon (Elizabeth line)', 'l1');
     const leg2Html = this._renderHistSection(leg2, null, '\ud83d\ude86 Leg 2 \u00b7 City Thameslink \u2192 Elephant & Castle (Thameslink)', 'l2');
-    return `${leg1Html}<hr class="hist-divider">${leg2Html}`;
+    return `<div class="hist-panel-wrap">${leg1Html}<hr class="hist-divider">${leg2Html}</div>`;
   }
 
   _render() {
