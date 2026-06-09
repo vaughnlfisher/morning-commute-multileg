@@ -1,7 +1,7 @@
-// Morning Commute Multileg Card v1.6.0
+// Morning Commute Multileg Card v1.6.1
 // Collapsible history: LEG 1 (Elizabeth line) + LEG 2 (Thameslink CTK->EPH)
 
-const VER = '1.6.0';
+const VER = '1.6.1';
 const SC = {
   on_time:    {color:'#4caf50', icon:'\u2713', label:'On time'},
   delayed:    {color:'#f44336', icon:'\u26a0', label:'Delayed'},
@@ -21,11 +21,10 @@ function sc(state, delay) {
   return SC.on_time;
 }
 function pct_color(p) {
-  if (p===null||p===undefined) return '#555';
-  if (p>=98) return '#2e7d32';
-  if (p>=95) return '#4caf50';
-  if (p>=90) return '#ff9800';
-  if (p>=80) return '#f44336';
+  if (p===null||p===undefined) return 'var(--secondary-text-color)';
+  if (p>=90) return '#43a047';
+  if (p>=80) return '#fb8c00';
+  if (p>=70) return '#e53935';
   return '#b71c1c';
 }
 function day_abbr(dateStr) {
@@ -168,7 +167,7 @@ class MorningCommuteMultilegCard extends HTMLElement {
       .hist-section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--secondary-text-color);margin-bottom:6px}
       .hist-section-title.l1{color:#0098D4} .hist-section-title.l2{color:#003688}
       .hist-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px}
-      .hist-stat{text-align:center;background:var(--secondary-background-color,rgba(0,0,0,.04));border-radius:6px;padding:6px 4px}
+      .hist-stat{text-align:center;background:rgba(128,128,128,.12);border-radius:6px;padding:6px 4px;border:1px solid rgba(128,128,128,.15)}
       .hist-stat-val{font-size:1.15em;font-weight:700}
       .hist-stat-lbl{font-size:.7em;color:var(--secondary-text-color);margin-top:1px}
       .hist-days{display:flex;gap:3px;margin-bottom:6px}
