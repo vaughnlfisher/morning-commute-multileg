@@ -1,7 +1,7 @@
-// Morning Commute Multileg Card v1.6.3
+// Morning Commute Multileg Card v1.6.4
 // Collapsible history: LEG 1 (Elizabeth line) + LEG 2 (Thameslink CTK->EPH)
 
-const VER = '1.6.3';
+const VER = '1.6.4';
 const SC = {
   on_time:    {color:'#4caf50', icon:'\u2713', label:'On time'},
   delayed:    {color:'#f44336', icon:'\u26a0', label:'Delayed'},
@@ -145,8 +145,9 @@ class MorningCommuteMultilegCard extends HTMLElement {
       .leg-pill{border-radius:10px;padding:1px 7px;font-size:9px;font-weight:800;color:#fff}
       .p1{background:#0098D4} .p2{background:#003688}
       .train-row{padding:${rp}}
-      .leg2-row{padding-left:28px;border-left:3px solid #003688;margin-left:13px}
+      .leg2-row{padding-left:28px;border-left:3px solid #003688;margin-left:13px;background:rgba(0,54,136,0.08)}
       .train-row:hover{background:var(--secondary-background-color,rgba(0,0,0,.03))}
+      .train-row:not(.leg2-row){background:rgba(0,152,212,0.08);border-left:3px solid #0098D4}
       .t-top{display:flex;align-items:baseline;justify-content:space-between;gap:6px;margin-bottom:3px}
       .t-time{font-size:1.25em;font-weight:700;color:var(--primary-text-color);letter-spacing:-.3px;flex-shrink:0}
       .t-meta{display:flex;align-items:center;gap:8px;flex:1;flex-wrap:wrap}
