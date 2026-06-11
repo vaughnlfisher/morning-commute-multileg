@@ -1,7 +1,7 @@
-// Morning Commute Multileg Card v1.6.4
+// Morning Commute Multileg Card v1.6.5
 // Collapsible history: LEG 1 (Elizabeth line) + LEG 2 (Thameslink CTK->EPH)
 
-const VER = '1.6.4';
+const VER = '1.6.5';
 const SC = {
   on_time:    {color:'#4caf50', icon:'\u2713', label:'On time'},
   delayed:    {color:'#f44336', icon:'\u26a0', label:'Delayed'},
@@ -145,9 +145,9 @@ class MorningCommuteMultilegCard extends HTMLElement {
       .leg-pill{border-radius:10px;padding:1px 7px;font-size:9px;font-weight:800;color:#fff}
       .p1{background:#0098D4} .p2{background:#003688}
       .train-row{padding:${rp}}
-      .leg2-row{padding-left:28px;border-left:3px solid #003688;margin-left:13px;background:rgba(0,54,136,0.08)}
+      .leg2-row{padding-left:28px;border-left:3px solid #003688;margin-left:13px}
       .train-row:hover{background:var(--secondary-background-color,rgba(0,0,0,.03))}
-      .train-row:not(.leg2-row){background:rgba(0,152,212,0.08);border-left:3px solid #0098D4}
+      
       .t-top{display:flex;align-items:baseline;justify-content:space-between;gap:6px;margin-bottom:3px}
       .t-time{font-size:1.25em;font-weight:700;color:var(--primary-text-color);letter-spacing:-.3px;flex-shrink:0}
       .t-meta{display:flex;align-items:center;gap:8px;flex:1;flex-wrap:wrap}
@@ -198,7 +198,8 @@ class MorningCommuteMultilegCard extends HTMLElement {
     const delayHtml=cfg.show_delay_reason&&train.delay_reason?`<div class="t-delay">\u26a0 ${train.delay_reason}</div>`:'';
     const cancelHtml=cfg.show_delay_reason&&train.cancellation_reason?`<div class="t-delay">\u2715 ${train.cancellation_reason}</div>`:'';
     const opHtml=cfg.show_operator&&train.operator?`<div class="t-sub">${train.operator}</div>`:'';
-    return `<div class="train-row"><div class="t-top"><span class="t-time">${dep}</span><div class="t-meta">${platHtml}${jHtml}</div><span class="t-status" style="color:${status.color}">${status.icon} ${delay>0?`+${delay}m`:status.label}</span></div>${opHtml}${callHtml}${delayHtml}${cancelHtml}</div>`;
+    const _bg = carrierColor(train.operator_code, train.operator);
+    return `<div class="train-row" style="background:${hexToRgba(_bg, 0.08)};border-left:3px solid ${hexToRgba(_bg, 0.3)}"><div class="t-top"><span class="t-time">${dep}</span><div class="t-meta">${platHtml}${jHtml}</div><span class="t-status" style="color:${status.color}">${status.icon} ${delay>0?`+${delay}m`:status.label}</span></div>${opHtml}${callHtml}${delayHtml}${cancelHtml}</div>`;
   }
 
   _leg2Rows(train) {
@@ -218,7 +219,8 @@ class MorningCommuteMultilegCard extends HTMLElement {
           else if (d>=3){scol='#ff9800';slbl=`+${d}m`;}
           else {scol='#4caf50';slbl='\u2713 On time';}
         }
-        return `<div class="train-row leg2-row"><div class="t-top"><span class="t-time" style="color:${scol}">${c.time}</span><div class="t-meta">${platHtml}<span style="font-size:.79em;color:var(--secondary-text-color)">${waitLbl}</span></div><span class="t-status" style="color:${scol}">${slbl}</span></div><div class="t-sub">Towards ${c.destination}</div></div>`;
+        const _lbg = carrierColor(c?.operator_code||'TL', c?.operator||'Thameslink');
+        return `<div class="train-row leg2-row" style="background:${hexToRgba(_lbg, 0.08)}"><div class="t-top"><span class="t-time" style="color:${scol}">${c.time}</span><div class="t-meta">${platHtml}<span style="font-size:.79em;color:var(--secondary-text-color)">${waitLbl}</span></div><span class="t-status" style="color:${scol}">${slbl}</span></div><div class="t-sub">Towards ${c.destination}</div></div>`;
       }).join('');
     }
     // Fallback: single earliest or TfL-derived estimate
@@ -235,7 +237,8 @@ class MorningCommuteMultilegCard extends HTMLElement {
     const color=conn.estimated?'#ff9800':'#003688';
     const statusLbl=conn.estimated?'~ Estimated':'\u2713 Live';
     const waitLbl=conn.waitMins!==null&&conn.waitMins!==undefined?`${walkMins}m walk + ${conn.waitMins}m wait`:`${walkMins}m walk`;
-    return `<div class="train-row leg2-row"><div class="t-top"><span class="t-time" style="color:${color}">${conn.time}</span><div class="t-meta"><span style="font-size:.79em;color:var(--secondary-text-color)">${waitLbl}</span></div><span class="t-status" style="color:${color}">${statusLbl}</span></div><div class="t-sub">Towards ${conn.dest}</div></div>`;
+    const _lbg2 = carrierColor('TL', 'Thameslink');
+    return `<div class="train-row leg2-row" style="background:${hexToRgba(_lbg2, 0.08)}"><div class="t-top"><span class="t-time" style="color:${color}">${conn.time}</span><div class="t-meta"><span style="font-size:.79em;color:var(--secondary-text-color)">${waitLbl}</span></div><span class="t-status" style="color:${color}">${statusLbl}</span></div><div class="t-sub">Towards ${conn.dest}</div></div>`;
   }
 
   _renderHistSection(attrs, delAttrs, label, pillClass) {
