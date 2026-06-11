@@ -10,6 +10,19 @@ const SC = {
   no_service: {color:'#9e9e9e', icon:'\u2013', label:'No service'},
   expected:   {color:'#2196f3', icon:'~', label:'Expected'},
 };
+function hexToRgba(hex, a) {
+  const h = hex.replace('#','');
+  return `rgba(${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)},${a})`;
+}
+function carrierColor(opCode, operator) {
+  const c = (opCode || '').toUpperCase();
+  if (c === 'XR' || (operator || '').toLowerCase().includes('elizabeth')) return '#9364CC';
+  if (c === 'GW' || (operator || '').toLowerCase().includes('great western')) return '#0A493E';
+  if (c === 'TL' || (operator || '').toLowerCase().includes('thameslink')) return '#B30D24';
+  if (c === 'SE' || (operator || '').toLowerCase().includes('southeastern')) return '#003688';
+  if (c === 'LU') return '#007D32';
+  return '#555';
+}
 function sc(state, delay) {
   if (!state) return SC.no_service;
   const s = state.toLowerCase();
