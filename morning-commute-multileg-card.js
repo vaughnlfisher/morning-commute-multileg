@@ -317,6 +317,7 @@ class MorningCommuteMultilegCard extends HTMLElement {
     });
     const hdrHtml=cfg.show_header?`<div class="hdr"><span style="font-size:20px">\ud83d\ude86</span><div><div class="hdr-title">${cfg.title}</div>${cfg.show_route?`<div class="hdr-route">${origin} \u2192 ${dest}</div>`:''}</div></div>`:'';
     const blocksHtml=visible.length?visible.slice(0,3).map((t,idx)=>{
+      if (!this._collapsedInit && idx > 0) this._collapsed[idx] = true;
       const collapsed=!!this._collapsed[idx];
       const totalTxt=(t.total_transit_mins!==null&&t.total_transit_mins!==undefined)?`<span class="total-time">\u23f1 ${t.total_transit_mins} min total</span>`:'';
       const caret=`<span class="caret${collapsed?'':' open'}">\u25bc</span>`;
@@ -331,6 +332,7 @@ class MorningCommuteMultilegCard extends HTMLElement {
     this.shadowRoot.innerHTML=`<style>${this._styles()}</style><ha-card>${hdrHtml}${blocksHtml}${histHtml}${footerHtml}</ha-card>`;
     const toggleEl=this.shadowRoot.getElementById('hist-toggle');
     if (toggleEl) toggleEl.addEventListener('click',()=>{this._histOpen=!this._histOpen;this._render();});
+    this._collapsedInit = true;
     this.shadowRoot.querySelectorAll('.leg1-toggle').forEach(el=>{
       el.addEventListener('click',()=>{
         const i=parseInt(el.getAttribute('data-idx'),10);
