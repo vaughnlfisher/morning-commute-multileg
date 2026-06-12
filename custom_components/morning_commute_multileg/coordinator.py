@@ -41,7 +41,7 @@ HSP_FROM     = "CTK"
 TFL_APP_KEY = "cd8efc356eff48898163e18960ffe5da"
 TFL_JOURNEY_URL = "https://api.tfl.gov.uk/Journey/JourneyResults/{frm}/to/{to}"
 NAPTAN_CTK = "City%20Thameslink"   # URL-encoded text name
-NAPTAN_EPH = "Elephant%20and%20Castle"   # URL-encoded text name
+NAPTAN_EPH = "940GZZLUEAC"   # Elephant & Castle tube NaPTAN (NR one returns 300)
 
 HSP_TO_LOC   = "EPH"  # Elephant & Castle — confirmed working
 HSP_REFRESH  = timedelta(hours=1)
