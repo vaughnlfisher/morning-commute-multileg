@@ -40,8 +40,8 @@ HSP_FROM     = "CTK"
 # TfL Journey Planner fallback for leg2 (when Huxley southbound window too short)
 TFL_APP_KEY = "cd8efc356eff48898163e18960ffe5da"
 TFL_JOURNEY_URL = "https://api.tfl.gov.uk/Journey/JourneyResults/{frm}/to/{to}"
-NAPTAN_CTK = "910GCTMSLNK"   # City Thameslink
-NAPTAN_EPH = "910GELEPHNT"   # Elephant & Castle
+NAPTAN_CTK = "City%20Thameslink"   # URL-encoded text name
+NAPTAN_EPH = "Elephant%20and%20Castle"   # URL-encoded text name
 
 HSP_TO_LOC   = "EPH"  # Elephant & Castle — confirmed working
 HSP_REFRESH  = timedelta(hours=1)
