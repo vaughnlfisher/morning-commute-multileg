@@ -36,6 +36,13 @@ HSP_URL      = "https://hsp-prod.rockshore.net/api/v1/serviceMetrics"
 HSP_USERNAME = "YOUR_NRE_USERNAME"
 HSP_PASSWORD = "YOUR_NRE_PASSWORD"
 HSP_FROM     = "CTK"
+
+# TfL Journey Planner fallback for leg2 (when Huxley southbound window too short)
+TFL_APP_KEY = "cd8efc356eff48898163e18960ffe5da"
+TFL_JOURNEY_URL = "https://api.tfl.gov.uk/Journey/JourneyResults/{frm}/to/{to}"
+NAPTAN_CTK = "910GCTMSLNK"   # City Thameslink
+NAPTAN_EPH = "910GELEPHNT"   # Elephant & Castle
+
 HSP_TO_LOC   = "EPH"  # Elephant & Castle — confirmed working
 HSP_REFRESH  = timedelta(hours=1)
 
@@ -410,6 +417,82 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.warning("HSP fetch error: %s (%s)", type(err).__name__, err)
 
+
+    async def _fetch_leg2_journey(self, depart_time_str):
+        """TfL Journey Planner fallback: CTK → EPH departing at given time.
+        Returns list of connection dicts matching _build_leg2 format."""
+        try:
+            h, m = map(int, depart_time_str.split(":"))
+        except (ValueError, TypeError):
+            return []
+        now = datetime.now()
+        depart_dt = now.replace(hour=h, minute=m, second=0)
+        if (depart_dt - now).total_seconds() < -3600:
+            depart_dt += timedelta(days=1)
+
+        url = TFL_JOURNEY_URL.format(frm=NAPTAN_CTK, to=NAPTAN_EPH)
+        params = {
+            "mode": "national-rail",
+            "timeIs": "Departing",
+            "date": depart_dt.strftime("%Y%m%d"),
+            "time": depart_dt.strftime("%H%M"),
+            "app_key": TFL_APP_KEY,
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url, params=params, headers={"Accept": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status != 200:
+                        _LOGGER.warning("TfL JP CTK->EPH HTTP %s", resp.status)
+                        return []
+                    data = await resp.json(content_type=None)
+        except Exception as err:
+            _LOGGER.warning("TfL JP CTK->EPH error: %s", err)
+            return []
+
+        connections = []
+        for jn in (data.get("journeys") or [])[:3]:
+            start = jn.get("startDateTime", "")
+            arr = jn.get("arrivalDateTime", "")
+            dur = jn.get("duration")
+            try:
+                dep_hm = start[11:16] if len(start) >= 16 else None
+            except (IndexError, TypeError):
+                dep_hm = None
+            if not dep_hm:
+                continue
+            # Compute wait from board time
+            try:
+                dh2, dm2 = map(int, dep_hm.split(":"))
+                wait = (dh2 * 60 + dm2) - (h * 60 + m)
+                if wait < 0:
+                    wait += 1440
+            except (ValueError, TypeError):
+                wait = 0
+            lines = []
+            for lg in (jn.get("legs") or []):
+                ro = (lg.get("routeOptions") or [{}])
+                nm = ro[0].get("name") if ro else None
+                if nm and nm not in lines:
+                    lines.append(nm)
+            dest = "Elephant & Castle"
+            for lg in reversed(jn.get("legs") or []):
+                ap = lg.get("arrivalPoint", {})
+                if ap.get("commonName"):
+                    dest = ap["commonName"].replace(" Rail Station", "")
+                    break
+            connections.append({
+                "time": dep_hm,
+                "destination": dest,
+                "wait_mins": wait,
+                "transit_mins": dur,
+                "operator": " + ".join(lines) if lines else "Thameslink",
+                "source": "tfl_journey_planner",
+            })
+        return connections
+
     async def _async_update_data(self) -> dict:
         self.update_interval = _get_scan_interval()
         try:
@@ -451,6 +534,19 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                 "best_day": _attr(self.hass, s_id, "best_day"),
             }
             data["summary"].update(_build_leg2(southbound, next_arr))
+            if not data["summary"].get("leg2_connections") and next_arr:
+                walk = data["summary"].get("leg2_walk_mins", 5)
+                try:
+                    ah, am = map(int, next_arr.split(":"))
+                    board_time = f"{(ah*60+am+walk)//60%24:02d}:{(ah*60+am+walk)%60:02d}"
+                except (ValueError, TypeError):
+                    board_time = next_arr
+                jp_conns = await self._fetch_leg2_journey(board_time)
+                if jp_conns:
+                    data["summary"]["leg2_connections"] = jp_conns
+                    data["summary"]["leg2_earliest_after_arrival"] = f"{jp_conns[0]['time']} \u2192 {jp_conns[0]['destination']}"
+                    data["summary"]["leg2_earliest_destination"] = jp_conns[0]["destination"]
+                    data["summary"]["leg2_connection_mins"] = jp_conns[0]["wait_mins"]
 
             data["status"] = {
                 "state": _state(self.hass, st_id),
@@ -488,6 +584,20 @@ class MorningCommuteCoordinator(DataUpdateCoordinator):
                     "delay_reason": _attr(self.hass, t_id, "delay_reason"),
                 }
                 entry.update(_build_leg2(southbound, t_arr))
+                # Fallback: if Huxley didn't have southbound for this arrival, use TfL Journey Planner
+                if not entry.get("leg2_connections") and t_arr:
+                    walk = entry.get("leg2_walk_mins", 5)
+                    try:
+                        ah, am = map(int, t_arr.split(":"))
+                        board_time = f"{(ah*60+am+walk)//60%24:02d}:{(ah*60+am+walk)%60:02d}"
+                    except (ValueError, TypeError):
+                        board_time = t_arr
+                    jp_conns = await self._fetch_leg2_journey(board_time)
+                    if jp_conns:
+                        entry["leg2_connections"] = jp_conns
+                        entry["leg2_earliest_after_arrival"] = f"{jp_conns[0]['time']} \u2192 {jp_conns[0]['destination']}"
+                        entry["leg2_earliest_destination"] = jp_conns[0]["destination"]
+                        entry["leg2_connection_mins"] = jp_conns[0]["wait_mins"]
                 # Leg 1 in-transit (Twyford -> Farringdon) from scheduled times
                 leg1_transit = None
                 dep_s = entry.get("scheduled_departure")
